@@ -15,6 +15,10 @@ jobs:
           mkdir -p lib && cd lib
           npm pack leaflet@1.9.4 >/dev/null 2>&1 && tar xzf leaflet-1.9.4.tgz
           cp package/dist/leaflet.js package/dist/leaflet.css . && mkdir -p images && cp package/dist/images/* images/
-          rm -rf package leaflet-1.9.4.tgz && echo "leaflet-1.9.4" >> versions.txt && ls -la
+          rm -rf package leaflet-1.9.4.tgz
+          npm pack leaflet-rotate >/dev/null 2>&1 && f=$(ls leaflet-rotate-*.tgz) && tar xzf $f
+          ls package/dist && cp package/dist/leaflet-rotate.js . 2>/dev/null || cp package/dist/leaflet-rotate-src.js leaflet-rotate.js
+          rm -rf package $f
+          sort -u -o versions.txt <(cat versions.txt; echo "leaflet-1.9.4"; echo "${f%.tgz}") && ls -la
           cd .. && git config user.name "github-actions" && git config user.email "actions@github.com"
-          git add lib && git commit -m "Vendor Leaflet 1.9.4" && git push
+          git add lib && git commit -m "Vendor map libraries" && git push
