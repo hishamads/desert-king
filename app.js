@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_TILES = 8000;                  // safety cap per area
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -2444,6 +2444,48 @@ const GPX = {
       Lists.render();
       UI.toast(`✅ تم استيراد ${nt} مسار و ${nw} نقطة`);
     }
+  },
+
+  /* «تحميل مواقع الكشتات» — fetch the GPX files bundled with the site
+   * (also pre-cached by the service worker, so it works offline after
+   * the first visit). Items already present (same name + within 50 m,
+   * or a track with the same name) are skipped, so pressing twice is safe. */
+  BUNDLED: ['./كشتات-حسب-المنطقة.gpx', './طريق-المخيم.gpx'],
+
+  async loadBundled() {
+    let nt = 0, nw = 0, skipped = 0;
+    const all = [];
+    UI.toast('⏳ جارٍ تحميل مواقع الكشتات…');
+    for (const url of this.BUNDLED) {
+      try {
+        const res = await fetch(encodeURI(url));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const { tracks, waypoints } = this.parse(await res.text(), url.slice(2));
+        for (const t of tracks) {
+          if (S.tracks.some(x => x.name === t.name)) { skipped++; continue; }
+          await Store.put('tracks', t); S.tracks.push(t); nt++; all.push(...t.segments.flat());
+        }
+        for (const w of waypoints) {
+          if (S.waypoints.some(x => x.name === w.name && haversine(x.lat, x.lon, w.lat, w.lon) < 50)) { skipped++; continue; }
+          await Store.put('waypoints', w); S.waypoints.push(w); nw++; all.push([w.lat, w.lon]);
+        }
+      } catch (e) {
+        UI.toast('تعذر تحميل المواقع — تأكد من الاتصال بالإنترنت أول مرة', 5000);
+        return;
+      }
+    }
+    if (nt || nw) {
+      MapView.renderTracks();
+      MapView.renderWaypoints();
+      if (all.length) {
+        if (S.view === 'map') MapView.fitPoints(all.map(p => [p[0], p[1]]));
+        else { setFollow(false); Radar.center = { lat: all[0][0], lon: all[0][1] }; Radar.draw(); }
+      }
+      Lists.render();
+      UI.toast(`✅ تمت إضافة ${nw} موقع و ${nt} مسار`);
+    } else {
+      UI.toast(skipped ? '✔ مواقع الكشتات موجودة مسبقاً' : 'لا توجد مواقع جديدة');
+    }
   }
 };
 
@@ -2536,7 +2578,7 @@ const Lists = {
       const list = groups.get(r).sort(S.pos ? near : (a, b) => a.name.localeCompare(b.name, 'ar'));
       const unv = list.filter(w => w.verified === false).length;
       return `<div class="grp-h"><span>${escapeHtml(r)}</span><small>${list.length} نقطة${unv ? ` · ${unv} غير موثّقة` : ''}</small></div>` + list.map(item).join('');
-    }).join('') : '<p class="empty">لا توجد نقاط محفوظة بعد.<br>اضغط «حفظ نقطة» لحفظ موقعك الحالي.</p>';
+    }).join('') : '<p class="empty">لا توجد نقاط محفوظة بعد.<br>اضغط «حفظ نقطة» لحفظ موقعك الحالي.</p><div class="btn-row"><button class="btn btn-primary" data-act="load-sites">⛺ تحميل مواقع الكشتات</button></div>';
 
     // Tracks (newest first).
     const trks = [...S.tracks].sort((a, b) => b.created - a.created);
@@ -2770,6 +2812,7 @@ const Actions = {
 
   /* ----- GPX ----- */
   'import-gpx'() { $('#gpx-input').click(); },
+  'load-sites'() { GPX.loadBundled(); },
   'export-all'() { GPX.exportAll(); },
 
   /* ----- guidance & route planning ----- */
