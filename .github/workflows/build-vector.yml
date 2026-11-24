@@ -1,0 +1,50 @@
+# Builds the offline vector map of Saudi Arabia (PMTiles) from the daily
+# Protomaps planet build, splits it into <95 MB parts (GitHub file limit)
+# and commits them to /vector so GitHub Pages serves them to the app.
+name: Build KSA vector map
+on:
+  workflow_dispatch:
+    inputs:
+      maxzoom: { description: 'Max zoom', default: '14' }
+      commit:  { description: 'Commit parts (yes/no)', default: 'no' }
+  push:
+    paths: ['.github/workflows/build-vector.yml', '.github/vector-request']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pmtiles CLI
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          url=$(gh api repos/protomaps/go-pmtiles/releases/latest --jq '.assets[]|select(.name|test("Linux_x86_64"))|.browser_download_url')
+          curl -sL "$url" | tar xz pmtiles && ./pmtiles version
+      - name: Extract Saudi Arabia
+        run: |
+          REQ=$(cat .github/vector-request 2>/dev/null || echo "14 no")
+          MZ=${{ github.event.inputs.maxzoom }}; MZ=${MZ:-$(echo $REQ | cut -d' ' -f1)}
+          echo "MZ=$MZ" >> $GITHUB_ENV
+          echo "DO_COMMIT=${{ github.event.inputs.commit }}$(echo $REQ | cut -d' ' -f2)" >> $GITHUB_ENV
+          B=$(curl -s https://build-metadata.protomaps.dev/builds.json | python3 -c "import json,sys;print(sorted(json.load(sys.stdin),key=lambda b:b['key'])[-1]['key'])")
+          echo "Build: $B"
+          for z in 10 12 $MZ; do
+            ./pmtiles extract "https://build.protomaps.com/$B" ksa-z$z.pmtiles --bbox=34.4,16.0,55.8,32.6 --maxzoom=$z
+            ls -la ksa-z$z.pmtiles
+          done
+          ./pmtiles show ksa-z$MZ.pmtiles | head -30
+      - name: Split and commit
+        if: contains(env.DO_COMMIT, 'yes')
+        run: |
+          rm -rf vector && mkdir vector
+          split -b 90m -d -a 2 ksa-z$MZ.pmtiles vector/ksa.pmtiles.part
+          python3 - <<'PY'
+          import os, json, hashlib
+          parts = sorted(f for f in os.listdir('vector') if '.part' in f)
+          size = sum(os.path.getsize('vector/' + p) for p in parts)
+          json.dump({'parts': parts, 'size': size, 'maxzoom': int(os.environ['MZ'])}, open('vector/index.json', 'w'))
+          PY
+          cat vector/index.json
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add vector && git commit -m "Update KSA vector map (z$MZ)" && git push
