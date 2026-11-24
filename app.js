@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -2104,6 +2104,8 @@ const Place = {
 
   openWp(w) { this.cur = { type: 'wp', w }; S.pin = null; this.redrawPin(); this.render(); },
   openPin(lat, lon) { this.cur = { type: 'pin', lat, lon }; S.pin = { lat, lon }; this.redrawPin(); this.render(); },
+  /** A named place from the offline search (not saved yet). */
+  openNamed(r) { this.cur = { type: 'pin', lat: r.lat, lon: r.lon, name: r.name, icon: r.icon, label: r.label }; S.pin = { lat: r.lat, lon: r.lon }; this.redrawPin(); this.render(); },
 
   redrawPin() { MapView.showPin(); Radar.draw(); },
   clearPin() { if (S.pin) { S.pin = null; this.redrawPin(); } },
@@ -2115,7 +2117,7 @@ const Place = {
       const cat = CATS[c.w.cat] || CATS.other;
       return { lat: c.w.lat, lon: c.w.lon, name: c.w.name, icon: cat.icon, label: cat.label, w: c.w };
     }
-    return { lat: c.lat, lon: c.lon, name: 'نقطة محددة', icon: '📌', label: 'دبوس من الخريطة' };
+    return { lat: c.lat, lon: c.lon, name: c.name || 'نقطة محددة', icon: c.icon || '📌', label: c.label || 'دبوس من الخريطة' };
   },
 
   render() {
@@ -2147,7 +2149,10 @@ const Place = {
     Guide.setPoint(`${i.icon} ${i.name}`, i.lat, i.lon, i.w ? { wpId: i.w.id } : {});
     this.clearPin();
   },
-  save() { UI._keepPin = true; const i = this.info(); Waypoints.openForm(i.lat, i.lon); },
+  save() {
+    UI._keepPin = true; const i = this.info(); Waypoints.openForm(i.lat, i.lon);
+    if (this.cur && this.cur.name) $('#wp-name').value = this.cur.name.slice(0, 40);
+  },
   copy() {
     const i = this.info(), txt = `${i.lat.toFixed(6)}, ${i.lon.toFixed(6)}`;
     if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => UI.toast('تم نسخ الإحداثيات: ' + txt), () => UI.toast(txt));
@@ -2648,6 +2653,11 @@ const Vector = {
         done += blob.size;
       }
       await this.put({ name: '__meta', parts: idx.parts, size: idx.size, maxzoom: idx.maxzoom, saved: Date.now() });
+      try {
+        status.textContent = 'جارٍ تنزيل فهرس البحث…';
+        const sr = await fetch('./vector/search.json', { cache: 'no-store' });
+        if (sr.ok) { await this.put({ name: '__search', blob: await sr.blob() }); Search.idx = null; Search.loading = null; }
+      } catch (e) { /* search index is optional; fetched later on first search */ }
       bar.style.width = '100%';
       status.textContent = '✅ تم حفظ الخريطة الرسومية للمملكة كاملة';
       UI.toast('✅ الخريطة الرسومية جاهزة — اخترها من زر الطبقات', 4500);
@@ -2711,6 +2721,169 @@ const Vector = {
     const b = $('#vec-dl'), r = $('#vec-rm');
     if (b) b.textContent = m ? '🗺️ الخريطة الرسومية محفوظة ✓ (تحديث)' : '🗺️ الخريطة الرسومية للمملكة كاملة (≈255 م.ب)';
     if (r) r.hidden = !m;
+  }
+};
+
+/* =====================================================================
+ * §14c SEARCH — «إلى أين؟» offline place search
+ * ---------------------------------------------------------------------
+ * Sources, in this order: coordinates / Google-Maps links, saved places,
+ * and the offline index vector/search.json (every named feature of the
+ * vector map: cities, villages, districts, roads, valleys, mountains,
+ * fuel, mosques, wells…), built by tools/build_search.py. The index is
+ * stored with the vector map in IndexedDB, so search works offline.
+ * Arabic is normalised (أ/إ/آ→ا, ة→ه, ى→ي, no diacritics or tatweel).
+ * ===================================================================== */
+const KIND_AR = {
+  city: ['مدينة', '🏙️'], town: ['بلدة', '🏘️'], village: ['قرية', '🏡'], hamlet: ['هجرة', '🏡'],
+  locality: ['موقع', '📍'], neighbourhood: ['حي', '🏘️'], suburb: ['حي', '🏘️'], macrohood: ['حي', '🏘️'],
+  isolated_dwelling: ['مسكن', '🏠'], farm: ['مزرعة', '🌴'], region: ['منطقة', '🗺️'], country: ['دولة', '🗺️'],
+  fuel: ['محطة وقود', '⛽'], place_of_worship: ['مسجد', '🕌'], hospital: ['مستشفى', '🏥'], clinic: ['مستوصف', '🏥'],
+  pharmacy: ['صيدلية', '💊'], school: ['مدرسة', '🏫'], university: ['جامعة', '🎓'], college: ['كلية', '🎓'],
+  police: ['شرطة', '🚓'], restaurant: ['مطعم', '🍽️'], cafe: ['مقهى', '☕'], fast_food: ['مطعم', '🍽️'],
+  supermarket: ['تموينات', '🛒'], convenience: ['بقالة', '🛒'], marketplace: ['سوق', '🛒'], hotel: ['فندق', '🏨'],
+  bank: ['بنك', '🏦'], atm: ['صراف', '🏧'], car_repair: ['ورشة', '🔧'], park: ['حديقة', '🌳'],
+  peak: ['جبل', '⛰️'], volcano: ['بركان', '⛰️'], hill: ['تل', '⛰️'], valley: ['وادي', '🏜️'], wadi: ['وادي', '🏜️'],
+  sand: ['رمال', '🏜️'], desert: ['صحراء', '🏜️'], dune: ['كثبان', '🏜️'], beach: ['شاطئ', '🏖️'],
+  water: ['ماء', '💧'], lake: ['بحيرة', '💧'], reservoir: ['خزان', '💧'], spring: ['عين', '💧'], well: ['بئر', '💧'],
+  water_well: ['بئر', '💧'], river: ['وادي / شعيب', '🏜️'], stream: ['شعيب', '🏜️'], canal: ['قناة', '💧'], wetland: ['سبخة', '💧'],
+  administrative: ['منطقة إدارية', '🗺️'], place: ['مكان', '📍'], scrub: ['شجيرات', '🌿'], rail: ['سكة حديد', '🚆'], ferry: ['عبّارة', '⛴️'],
+  mall: ['مجمع تجاري', '🛍️'], townhall: ['بلدية', '🏛️'], post_office: ['بريد', '📮'], library: ['مكتبة', '📚'], stadium: ['ملعب', '🏟️'], bare_rock: ['صخور', '🪨'], ocean: ['بحر', '🌊'], sea: ['بحر', '🌊'], bay: ['خليج', '🌊'],
+  aerodrome: ['مطار', '✈️'], airport: ['مطار', '✈️'], station: ['محطة', '🚉'], bus_stop: ['موقف', '🚌'],
+  highway: ['طريق سريع', '🛣️'], major_road: ['طريق', '🛣️'], minor_road: ['شارع', '🛣️'], other: ['طريق', '🛣️'], path: ['ممر', '🥾'],
+  military: ['منطقة عسكرية', '⚠️'], nature_reserve: ['محمية', '🌿'], national_park: ['متنزه', '🌿'], protected_area: ['محمية', '🌿'],
+  attraction: ['معلم', '⭐'], museum: ['متحف', '🏛️'], archaeological_site: ['موقع أثري', '🏛️'], ruins: ['آثار', '🏛️'], viewpoint: ['مطل', '👁️'],
+  camp_site: ['مخيم', '⛺'], industrial: ['منطقة صناعية', '🏭'], residential: ['سكني', '🏘️'], cemetery: ['مقبرة', '🪦']
+};
+const PLACE_RANK = { country: 0, region: 1, city: 2, town: 3, village: 4, suburb: 5, neighbourhood: 5, hamlet: 6, locality: 6 };
+
+function normAr(t) {
+  return String(t || '').toLowerCase()
+    .replace(/[ً-ٰٟـ]/g, '')       // diacritics, tatweel
+    .replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/ؤ/g, 'و').replace(/ئ/g, 'ي')
+    .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+    .replace(/\s+/g, ' ').trim();
+}
+
+const Search = {
+  idx: null,          // { kinds, d, norm[] }
+  loading: null,
+
+  async load() {
+    if (this.idx) return this.idx;
+    if (this.loading) return this.loading;
+    this.loading = (async () => {
+      let text = null;
+      try { const r = await Vector.get('__search'); if (r && r.blob) text = await r.blob.text(); } catch (e) {}
+      if (!text && navigator.onLine !== false) {
+        try {
+          const resp = await fetch('./vector/search.json', { cache: 'no-store' });
+          if (resp.ok) { const blob = await resp.blob(); text = await blob.text(); Vector.put({ name: '__search', blob }).catch(() => {}); }
+        } catch (e) {}
+      }
+      if (!text) { this.loading = null; return null; }
+      const j = JSON.parse(text);
+      j.norm = j.d.map(r => normAr(r[0]) + (r[1] ? ' ' + normAr(r[1]) : ''));
+      j.kindKey = j.kinds.map(k => k.split(':')[1] || k.split(':')[0]);
+      j.kindLayer = j.kinds.map(k => k.split(':')[0]);
+      this.idx = j;
+      return j;
+    })();
+    return this.loading;
+  },
+
+  label(kindKey, layer) {
+    const k = KIND_AR[kindKey] || (layer === 'roads' ? KIND_AR.major_road : layer === 'water' ? KIND_AR.water : null);
+    return k || ['مكان', '📍'];
+  },
+
+  /** Returns up to `max` results for the query. */
+  query(q, max = 40) {
+    const out = [];
+    const qn = normAr(q);
+    if (!qn) return out;
+    const here = S.pos || (MapView.map ? (c => ({ lat: c.lat, lon: c.lng }))(MapView.map.getCenter()) : null);
+    const dist = (la, lo) => here ? haversine(here.lat, here.lon, la, lo) : 0;
+
+    // 1. Coordinates or a Google-Maps link.
+    const pair = parsePair(q);
+    if (pair) out.push({ name: `${pair.lat.toFixed(5)}, ${pair.lon.toFixed(5)}`, lat: pair.lat, lon: pair.lon, icon: '🎯', label: 'إحداثيات', type: 'coord' });
+
+    const toks = qn.split(' ');
+    const match = n => toks.every(t => n.includes(t));
+
+    // 2. Saved places.
+    for (const w of S.waypoints) {
+      const n = normAr(w.name + ' ' + (w.region || '') + ' ' + (w.note || ''));
+      if (match(n)) { const c = CATS[w.cat] || CATS.other; out.push({ name: w.name, lat: w.lat, lon: w.lon, icon: c.icon, label: 'محفوظ · ' + c.label, type: 'wp', w, d: dist(w.lat, w.lon) }); }
+    }
+    out.sort((a, b) => (a.d || 0) - (b.d || 0));
+
+    // 3. Offline index.
+    const j = this.idx;
+    if (j) {
+      const hits = [];
+      for (let i = 0; i < j.d.length; i++) {
+        const n = j.norm[i];
+        if (!match(n)) continue;
+        const r = j.d[i], kk = j.kindKey[r[4]], layer = j.kindLayer[r[4]];
+        const starts = n.startsWith(qn) ? 0 : (' ' + n).includes(' ' + toks[0]) ? 1 : 2;
+        const rank = layer === 'places' ? (PLACE_RANK[kk] ?? 6) : 8;
+        const d = dist(r[2], r[3]);
+        hits.push({ i, score: starts * 1e9 + Math.min(rank, 8) * 1e8 * (n === qn ? 0 : 1) + d, d, kk, layer });
+        if (hits.length > 4000) break;
+      }
+      hits.sort((a, b) => a.score - b.score);
+      const shown = [];
+      for (const h of hits) {
+        if (shown.length >= max) break;
+        const r = j.d[h.i];
+        // Long valleys/roads are stored in pieces: show one per name within 25 km.
+        if (shown.some(x => x.name === r[0] && x.kk === h.kk && haversine(x.lat, x.lon, r[2], r[3]) < 25000)) continue;
+        const [lbl, ico] = this.label(h.kk, h.layer);
+        shown.push({ name: r[0], en: r[1], lat: r[2], lon: r[3], icon: ico, label: lbl, type: 'idx', d: h.d, kk: h.kk });
+      }
+      out.push(...shown);
+    }
+    return out.slice(0, max + 10);
+  },
+
+  async open() {
+    UI.openSheet('sheet-search');
+    const inp = $('#srch-q');
+    setTimeout(() => inp.focus(), 60);
+    if (!this.idx) {
+      $('#srch-hint').textContent = 'جارٍ تجهيز فهرس البحث…';
+      const j = await this.load();
+      $('#srch-hint').textContent = j
+        ? `ابحث في ${j.d.length.toLocaleString('en')} اسم: مدن، قرى، أحياء، طرق، أودية، جبال، محطات، مساجد… أو الصق إحداثيات أو رابط خرائط جوجل.`
+        : 'البحث في الأماكن يعمل دون إنترنت بعد تنزيل «الخريطة الرسومية». الآن: مواقعك المحفوظة والإحداثيات فقط.';
+    }
+    this.render();
+  },
+
+  render() {
+    const q = $('#srch-q').value;
+    this.results = this.query(q);
+    const box = $('#srch-res');
+    if (!q.trim()) { box.innerHTML = ''; return; }
+    if (!this.results.length) { box.innerHTML = '<p class="empty">لا توجد نتائج</p>'; return; }
+    box.innerHTML = this.results.map((r, k) => `
+      <button class="srch-item" data-act="srch-pick" data-k="${k}">
+        <span class="srch-ico">${r.icon}</span>
+        <span class="srch-txt"><b>${escapeHtml(r.name)}</b>${r.en ? ` <small class="ltr">${escapeHtml(r.en)}</small>` : ''}<br>
+        <small>${escapeHtml(r.label)}${r.d ? ' · <span class="ltr">' + fmtDist(r.d) + '</span>' : ''}</small></span>
+      </button>`).join('');
+  },
+
+  pick(k) {
+    const r = this.results && this.results[k];
+    if (!r) return;
+    setFollow(false);
+    if (S.view === 'map' && MapView.map) MapView.map.setView([r.lat, r.lon], Math.max(MapView.map.getZoom(), r.type === 'idx' && r.label === 'مدينة' ? 11 : 14));
+    else { Radar.center = { lat: r.lat, lon: r.lon }; Radar.draw(); }
+    if (r.type === 'wp') Place.openWp(r.w);
+    else Place.openNamed(r);
   }
 };
 
@@ -3072,7 +3245,9 @@ const Actions = {
 
   /* ----- guidance & route planning ----- */
   'guide-stop'() { Guide.stop(); },
-  'plan-open'() { PlanUI.open(); },
+  'plan-open'() { Search.open(); },
+  'plan-full'() { PlanUI.open(); },
+  'srch-pick'(el) { Search.pick(+el.dataset.k); },
   'plan-calc'() { PlanUI.calc(); },
   'plan-go'() { PlanUI.go(); },
   'plan-last'() { PlanUI.last(); },
@@ -3158,6 +3333,8 @@ const Actions = {
 };
 
 function bindUI() {
+  let _srchT = null;
+  $('#srch-q').addEventListener('input', () => { clearTimeout(_srchT); _srchT = setTimeout(() => Search.render(), 150); });
   // Delegated click handling (also works for buttons inside Leaflet popups).
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-act]');

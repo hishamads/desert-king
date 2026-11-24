@@ -275,6 +275,15 @@
   </section>
 
   <!-- 4f. Route planning (Google-Maps-like: from my location or between two points) -->
+  <!-- Offline search («إلى أين؟») -->
+  <section class="sheet sheet-tall" id="sheet-search" aria-label="البحث">
+    <div class="sheet-head"><h2>🔎 إلى أين؟</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <input id="srch-q" class="srch-input" type="search" placeholder="اسم مدينة، قرية، وادي، محطة… أو إحداثيات" autocomplete="off" enterkeyhint="search">
+    <button class="btn btn-block" style="margin-top:8px" data-act="plan-full">🧭 تخطيط مسار (من / إلى)</button>
+    <p class="hint" id="srch-hint"></p>
+    <div id="srch-res"></div>
+  </section>
+
   <section class="sheet" id="sheet-plan" aria-label="تخطيط المسار">
     <div class="sheet-head"><h2>🧭 الوجهة والمسار</h2><button class="x" data-act="close-sheet">✕</button></div>
     <label class="fld">من
