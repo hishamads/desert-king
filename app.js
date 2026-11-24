@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.3.1';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -3467,13 +3467,22 @@ async function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   try {
     const reg = await navigator.serviceWorker.register('sw.js');
-    reg.addEventListener('updatefound', () => {
-      const nw = reg.installing;
-      nw && nw.addEventListener('statechange', () => {
-        if (nw.state === 'activated' && navigator.serviceWorker.controller) {
-          UI.toast('⬆ تم تحديث التطبيق — أغلقه وافتحه لتطبيق التحديث', 6000);
-        }
-      });
+    // Look for a new version every time the app comes back to the foreground
+    // (iOS keeps Home-Screen apps in memory, so a cold start can be rare).
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+    setInterval(() => reg.update().catch(() => {}), 30 * 60 * 1000);
+
+    // When the new version takes over: reload now if nothing is running,
+    // otherwise wait until recording/guidance stop (their state is saved anyway).
+    let hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) { hadController = true; return; }       // first install, not an update
+      const busy = () => S.rec.status !== 'idle' || !!S.target;
+      if (!busy()) { location.reload(); return; }
+      UI.toast('⬆ يوجد تحديث جديد — سيُطبَّق عند انتهاء التسجيل أو الملاحة', 6000);
+      const t = setInterval(() => { if (!busy()) { clearInterval(t); location.reload(); } }, 5000);
     });
   } catch (e) {
     console.warn('SW registration failed', e);
