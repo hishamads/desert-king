@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.3.1';
+const APP_VERSION = '2.4.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -3375,6 +3375,7 @@ const Actions = {
   'dl-ksa'() { Offline.presetKSA(); },
   'dl-ksa-sat'() { Offline.presetKSASat(); },
   'vec-dl'() { Vector.download(); },
+  'app-update'() { forceUpdate(); },
   'vec-rm'() { Vector.remove(); },
   'dl-cancel'() { Offline.abort = true; },
   'tiles-clear'() { Offline.clearAll(); },
@@ -3463,6 +3464,25 @@ function bindUI() {
 /* =====================================================================
  * §19 BOOT
  * ===================================================================== */
+/** «تحديث التطبيق الآن»: drop the cached copy of the app (NOT the saved
+ * places, tracks, downloaded maps or imagery) and reload the newest version. */
+async function forceUpdate() {
+  if (navigator.onLine === false) { UI.toast('يلزم اتصال بالإنترنت للتحديث'); return; }
+  if (S.rec.status !== 'idle' && !confirm('يوجد تسجيل جارٍ (محفوظ تلقائياً). متابعة التحديث؟')) return;
+  UI.toast('⏳ جارٍ التحديث…', 6000);
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter(k => k.startsWith('desertnav-shell-') || k === 'desertnav-cdn-v1').map(k => caches.delete(k)));
+    }
+  } catch (e) { /* reload anyway */ }
+  location.replace(location.pathname + '?u=' + Date.now());
+}
+
 async function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   try {
