@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <!-- viewport-fit=cover lets the app draw under the iPhone notch / home bar;
+       safe-area insets in style.css keep controls out of those zones. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="color-scheme" content="light">
+
+  <!-- iOS "Add to Home Screen" behaviour -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="ملك الصحراء">
+  <meta name="format-detection" content="telephone=no">
+
+  <title>ملاحة ملك الصحراء</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+
+  <!-- Leaflet (cached by sw.js for offline use). If it is missing the app
+       still runs in radar mode. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="view-map">
+
+  <!-- =====================================================================
+       STAGE — full-screen map/radar with a few floating controls
+       (layout modelled on Google Maps: search pill on top, chips under it,
+       FABs bottom-right, compact info bottom-left, 3-tab bottom bar).
+       ===================================================================== -->
+  <main id="stage">
+    <div id="map" aria-label="الخريطة"></div>
+    <canvas id="radar" aria-label="رادار الإحداثيات"></canvas>
+
+    <!-- 1. Top: search pill (= «إلى أين؟») + quick chips -->
+    <div class="topbar" id="topbar">
+      <button class="search-pill" data-act="plan-open">
+        <span class="sp-logo">🧭</span>
+        <span class="sp-text">إلى أين؟</span>
+        <i id="gps-dot" class="dot dot-off" title="حالة GPS"></i>
+      </button>
+      <div class="chips">
+        <button class="chip" data-act="wp-open">📍 حفظ نقطة</button>
+        <button class="chip" data-act="rec-backtrack-any">↩ العودة على الأثر</button>
+        <button class="chip" data-act="dl-open">⬇ حفظ المنطقة</button>
+      </div>
+      <div class="badges">
+        <span id="net-badge" class="mini-badge red" hidden>بدون إنترنت</span>
+        <span id="mode-badge" class="mini-badge" hidden>رادار</span>
+      </div>
+    </div>
+
+    <!-- 2. Recording pill (compact; tap → recording sheet) -->
+    <button id="rec-panel" class="rec-pill" data-act="rec-sheet" hidden>
+      <span class="rec-dot" id="rec-badge"></span>
+      <span class="ltr" id="rec-time">00:00:00</span>
+      <span class="sep">·</span>
+      <span class="ltr" id="rec-dist">0 م</span>
+    </button>
+
+    <!-- 3. Right column: layers + north/heading-up -->
+    <div class="fab-col fab-right">
+      <button class="fab" data-act="open-layers" aria-label="طبقات الخريطة">
+        <svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 3 2 8.5 12 14l10-5.5L12 3zm-7.6 9.6L2 14l10 5.5L22 14l-2.4-1.4L12 16.8l-7.6-4.2z" fill="currentColor"/></svg>
+      </button>
+      <button class="fab" id="btn-hup" data-act="headingup-toggle" aria-label="اتجاه الرادار" hidden>N↑</button>
+    </div>
+
+    <!-- 4. Bottom-left: speed / heading chip (tap → full telemetry) + record FAB -->
+    <div class="bl-col">
+      <div id="tele" class="tele" data-act="tele-toggle" aria-label="بيانات GPS">
+        <div class="tele-speed"><b id="t-spd" class="ltr">--</b><small>كم/س</small></div>
+        <div class="tele-more">
+          <div class="tele-row"><span>الاتجاه <small id="t-hsrc"></small></span><b class="ltr"><span id="t-hdg">--</span>° <span id="t-card" class="tele-card">--</span></b></div>
+          <div class="tele-row"><span>الارتفاع</span><b class="ltr"><span id="t-alt">--</span> م</b></div>
+          <div class="tele-row"><span>الدقة</span><b class="ltr">±<span id="t-acc">--</span> م</b></div>
+          <div class="tele-coords ltr" data-act="copy-coords"><span id="t-dec">--</span><br><span id="t-dms">--</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. Bottom-right FABs: record, my location, directions (blue) -->
+    <div class="fab-col fab-br">
+      <button class="fab fab-rec" id="btn-rec" data-act="rec-main" aria-label="تسجيل المسار"><span class="tb-ico">●</span><span id="btn-rec-lbl" class="sr-only">تسجيل</span></button>
+      <button class="fab" id="btn-center" data-act="center" aria-label="موقعي">
+        <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+      <button class="fab fab-blue" data-act="plan-open" aria-label="الاتجاهات">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path d="M21.7 11.3 12.7 2.3a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4zM14 14.5V12h-4v3H8v-4a1 1 0 0 1 1-1h5V7.5l3.5 3.5L14 14.5z" fill="currentColor"/></svg>
+      </button>
+    </div>
+
+    <!-- 6. Navigation (Google-style): instruction banner on top, summary card at bottom -->
+    <div id="guide" class="nav-top" hidden>
+      <div class="nt-arrow">
+        <svg id="guide-arrow" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,8 82,88 50,70 18,88"/></svg>
+      </div>
+      <div class="nt-main">
+        <div class="nt-next" id="guide-next">--</div>
+        <div class="nt-sub" id="guide-name">—</div>
+      </div>
+    </div>
+    <div id="guide-bottom" class="nav-bottom" hidden>
+      <button class="nb-x" data-act="guide-stop" aria-label="إنهاء الملاحة">✕</button>
+      <div class="nb-info">
+        <div class="nb-main"><b class="ltr" id="guide-dist">--</b> <span class="nb-eta" id="guide-eta"></span></div>
+        <div class="nb-sub"><span class="ltr" id="guide-brg">--°</span> <span id="guide-card">--</span> <span class="kind-badge" id="guide-kind" hidden></span></div>
+        <div class="nb-note" id="guide-note"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- =====================================================================
+       BOTTOM BAR — 3 tabs like Google Maps
+       ===================================================================== -->
+  <nav id="toolbar">
+    <button class="tab-btn active" data-act="tab-explore"><span class="tb-ico">🗺️</span><span>استكشاف</span></button>
+    <button class="tab-btn" data-act="open-lists"><span class="tb-ico">⭐</span><span>محفوظاتي</span></button>
+    <button class="tab-btn" data-act="open-menu"><span class="tb-ico">⚙️</span><span>الإعدادات</span></button>
+  </nav>
+
+  <!-- ============ SHEETS ============ -->
+  <div id="backdrop" class="backdrop" data-act="close-sheet" hidden></div>
+
+  <!-- Layers (map type, radar, heading-up, legend) -->
+  <section class="sheet" id="sheet-layers" aria-label="طبقات الخريطة">
+    <div class="sheet-head"><h2>نوع الخريطة</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <div class="layer-grid">
+      <button class="layer-card" data-act="layer-set" data-layer="sat"><span class="lc-img lc-sat"></span>قمر صناعي</button>
+      <button class="layer-card" data-act="layer-set" data-layer="topo"><span class="lc-img lc-topo"></span>تضاريس</button>
+      <button class="layer-card" data-act="layer-set" data-layer="osm"><span class="lc-img lc-osm"></span>شوارع</button>
+      <button class="layer-card" data-act="layer-set" data-layer="radar"><span class="lc-img lc-radar"></span>رادار</button>
+    </div>
+    <p class="hint">إذا لم تتوفر صورة القمر الصناعي تظهر التضاريس المحفوظة مكانها تلقائياً. الرادار يعمل دائماً بدون خرائط.</p>
+    <label class="switch-row"><span>الرادار: اتجاه الحركة للأعلى</span><input type="checkbox" id="set-headingup"></label>
+    <h3 class="sub-h">دليل الخطوط</h3>
+    <div id="legend" class="legend-list">
+      <div class="lg-row"><i class="lg road"></i>طريق معبّد (مخطط)</div>
+      <div class="lg-row"><i class="lg off"></i>غير معبّد — مسار محفوظ</div>
+      <div class="lg-row"><i class="lg direct"></i>غير معبّد — اتجاه مباشر</div>
+      <div class="lg-row"><i class="lg rec"></i>تسجيل جديد</div>
+      <div class="lg-row"><i class="lg saved"></i>مسار مسجّل سابقاً</div>
+      <div class="lg-row"><i class="lg imp"></i>مسار مستورد</div>
+    </div>
+  </section>
+
+  <!-- Place card: tap a point / long-press the map (Google-style) -->
+  <section class="sheet" id="sheet-place" aria-label="معلومات المكان">
+    <div class="sheet-head"><h2 id="pl-title">—</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <div id="pl-meta"></div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-primary" data-act="pl-route">🚗 الاتجاهات</button>
+      <button class="btn" data-act="pl-direct">🧭 مباشر</button>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn" id="pl-save" data-act="pl-save">📍 حفظ كنقطة</button>
+      <button class="btn" data-act="pl-copy">نسخ الإحداثيات</button>
+    </div>
+  </section>
+
+  <!-- Recording controls -->
+  <section class="sheet" id="sheet-rec" aria-label="التسجيل">
+    <div class="sheet-head"><h2>تسجيل المسار</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <div class="rec-stats">
+      <div><small>الوقت</small><b class="ltr" id="rs-time">00:00:00</b></div>
+      <div><small>المسافة</small><b class="ltr" id="rs-dist">0 م</b></div>
+      <div><small>النقاط</small><b class="ltr" id="rec-pts">0</b></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn" id="rs-toggle" data-act="rec-main">⏸ إيقاف مؤقت</button>
+      <button class="btn btn-primary" id="btn-stop" data-act="rec-stop">■ إنهاء وحفظ</button>
+    </div>
+    <button class="btn btn-block" style="margin-top:8px" data-act="rec-backtrack">↩ العودة على الأثر (هذا التسجيل)</button>
+  </section>
+
+  <!-- 4a. Save waypoint -->
+  <section class="sheet" id="sheet-wp" aria-label="حفظ نقطة">
+    <div class="sheet-head"><h2>حفظ نقطة طريق</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <form id="wp-form" autocomplete="off">
+      <label class="fld">الاسم<input id="wp-name" type="text" maxlength="40" required></label>
+      <div class="fld">التصنيف
+        <div class="cats" id="wp-cats"></div>
+      </div>
+      <div class="row2">
+        <label class="fld">خط العرض<input id="wp-lat" type="text" inputmode="decimal" class="ltr" required></label>
+        <label class="fld">خط الطول<input id="wp-lon" type="text" inputmode="decimal" class="ltr" required></label>
+      </div>
+      <p class="hint" id="wp-hint">الإحداثيات من موقعك الحالي — يمكنك تعديلها يدوياً.</p>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">حفظ النقطة</button>
+        <button type="button" class="btn" data-act="close-sheet">إلغاء</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- 4b. Save / discard recorded track -->
+  <section class="sheet" id="sheet-save" aria-label="حفظ المسار">
+    <div class="sheet-head"><h2>إنهاء التسجيل</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <form id="save-form" autocomplete="off">
+      <label class="fld">اسم المسار<input id="trk-name" type="text" maxlength="60" required></label>
+      <p class="hint ltr" id="save-summary"></p>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">حفظ المسار</button>
+        <button type="button" class="btn btn-danger" data-act="rec-discard">حذف التسجيل</button>
+        <button type="button" class="btn" data-act="close-sheet">متابعة لاحقاً</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- 4c. Lists: waypoints / tracks / offline regions -->
+  <section class="sheet sheet-tall" id="sheet-lists" aria-label="النقاط والمسارات">
+    <div class="sheet-head"><h2>النقاط والمسارات</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <div class="tabs">
+      <button class="tab active" data-act="tab" data-tab="wps">النقاط</button>
+      <button class="tab" data-act="tab" data-tab="trks">المسارات</button>
+      <button class="tab" data-act="tab" data-tab="regions">المناطق المحفوظة</button>
+    </div>
+    <div class="tab-body" id="tab-wps"></div>
+    <div class="tab-body" id="tab-trks" hidden></div>
+    <div class="tab-body" id="tab-regions" hidden></div>
+    <div class="btn-row sticky-row">
+      <button class="btn" data-act="import-gpx">⬆ استيراد GPX</button>
+      <button class="btn" data-act="export-all">⬇ تصدير الكل GPX</button>
+    </div>
+  </section>
+
+  <!-- 4d. Settings / tools menu -->
+  <section class="sheet sheet-tall" id="sheet-menu" aria-label="الإعدادات">
+    <div class="sheet-head"><h2>الإعدادات والأدوات</h2><button class="x" data-act="close-sheet">✕</button></div>
+
+    <div class="menu-group">
+      <label class="switch-row">
+        <span>إبقاء الشاشة نشطة <small id="wl-state" class="muted"></small></span>
+        <input type="checkbox" id="set-wakelock">
+      </label>
+      <label class="switch-row">
+        <span>التحويل التلقائي للرادار عند غياب الخرائط</span>
+        <input type="checkbox" id="set-autoradar">
+      </label>
+      <button class="btn btn-block" data-act="compass-enable">🧭 تفعيل / معايرة البوصلة</button>
+    </div>
+
+    <div class="menu-group">
+      <h3>الخرائط بدون إنترنت</h3>
+      <button class="btn btn-block btn-primary" data-act="dl-open">⬇ حفظ المنطقة للعمل بدون إنترنت</button>
+      <p class="hint" id="storage-info">جارٍ حساب المساحة…</p>
+      <button class="btn btn-block btn-danger" data-act="tiles-clear">مسح كل الخرائط المحفوظة</button>
+    </div>
+
+    <div class="menu-group">
+      <h3>إعدادات التسجيل (توفير البطارية وتصفية التشويش)</h3>
+      <label class="fld">أقل مسافة بين النقاط (م)<input id="set-mindist" type="number" min="2" max="500" step="1" class="ltr"></label>
+      <label class="fld">أقصى زمن بين النقاط (ثانية)<input id="set-interval" type="number" min="2" max="600" step="1" class="ltr"></label>
+      <label class="fld">تجاهل القراءات الأسوأ دقة من (م)<input id="set-maxacc" type="number" min="5" max="500" step="1" class="ltr"></label>
+    </div>
+
+    <div class="menu-group">
+      <h3>ملفات GPX</h3>
+      <div class="btn-row">
+        <button class="btn" data-act="import-gpx">⬆ استيراد GPX</button>
+        <button class="btn" data-act="export-all">⬇ تصدير الكل</button>
+      </div>
+    </div>
+    <p class="hint center" id="app-version"></p>
+  </section>
+
+  <!-- 4f. Route planning (Google-Maps-like: from my location or between two points) -->
+  <section class="sheet" id="sheet-plan" aria-label="تخطيط المسار">
+    <div class="sheet-head"><h2>🧭 الوجهة والمسار</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <label class="fld">من
+      <select id="plan-from"></select>
+    </label>
+    <label class="fld" id="plan-from-coord-wrap" hidden>إحداثيات البداية (أو رابط خرائط جوجل)
+      <input id="plan-from-coord" type="text" class="ltr" placeholder="25.979029, 48.798508">
+    </label>
+    <label class="fld">إلى
+      <select id="plan-to"></select>
+    </label>
+    <label class="fld" id="plan-to-coord-wrap" hidden>إحداثيات الوجهة (أو رابط خرائط جوجل)
+      <input id="plan-to-coord" type="text" class="ltr" placeholder="25°58'44.5&quot;N 48°47'54.6&quot;E">
+    </label>
+    <p class="hint">الجزء المعبّد يُحسب عبر الإنترنت ويُحفظ على الجهاز. إن كانت الوجهة نهاية مسار مسجّل (مثل المخيم) يُكمل التطبيق عليه في غير المعبّد.</p>
+    <div class="plan-summary" id="plan-summary" hidden></div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="plan-calc" data-act="plan-calc">احسب المسار</button>
+      <button class="btn btn-go" id="plan-go" data-act="plan-go" disabled>▶ ابدأ الملاحة</button>
+    </div>
+    <button class="btn btn-block" id="plan-last" data-act="plan-last" style="margin-top:8px" hidden>↺ آخر مسار محسوب (يعمل دون اتصال)</button>
+  </section>
+
+  <!-- 4e. Offline area download -->
+  <section class="sheet" id="sheet-dl" aria-label="حفظ المنطقة">
+    <div class="sheet-head"><h2>حفظ المنطقة الظاهرة</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <p class="hint">سيتم تنزيل مربعات الخريطة للمنطقة الظاهرة على الشاشة الآن وتخزينها على الجهاز.</p>
+    <label class="fld">نوع الخريطة
+      <select id="dl-layer"></select>
+    </label>
+    <div class="row2">
+      <label class="fld">من مستوى تكبير<select id="dl-zmin" class="ltr"></select></label>
+      <label class="fld">إلى مستوى تكبير<select id="dl-zmax" class="ltr"></select></label>
+    </div>
+    <button class="btn btn-block" data-act="dl-ksa">🏜️ خلفية تضاريس المملكة كاملة (تكبير 5–9 · ≈35 م.ب)</button>
+    <p class="hint">تُنزَّل مرة واحدة، وتظهر خلف الخريطة في أي مكان لا تتوفر فيه صور محفوظة.</p>
+    <p class="dl-est" id="dl-est">—</p>
+    <div class="progress" hidden id="dl-progress"><div id="dl-bar"></div></div>
+    <p class="hint ltr" id="dl-status"></p>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="dl-start" data-act="dl-start">ابدأ التنزيل</button>
+      <button class="btn" id="dl-cancel" data-act="dl-cancel" hidden>إيقاف</button>
+      <button class="btn" data-act="close-sheet">إغلاق</button>
+    </div>
+  </section>
+
+  <!-- ============ 5. START OVERLAY (needed for iOS permissions) ============ -->
+  <div id="start-overlay" class="start-overlay">
+    <div class="start-card">
+      <img src="icons/icon-192.png" alt="" width="104" height="104">
+      <h1 class="app-name">ملاحة<span>ملك الصحراء</span></h1>
+      <p class="app-tag">ملاحة وتسجيل مسارات تعمل بدون إنترنت</p>
+      <ul class="start-list">
+        <li>📡 سيُطلب إذن الموقع (GPS)</li>
+        <li>🧭 وإذن حساسات الحركة للبوصلة (آيفون)</li>
+        <li>🔆 وتفعيل إبقاء الشاشة نشطة</li>
+      </ul>
+      <button class="btn btn-primary btn-big" data-act="start">ابدأ الملاحة</button>
+      <p class="hint" id="start-hint"></p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <!-- No "accept" filter on purpose: iOS greys out .gpx files when an
+       unknown extension is used as a filter. app.js validates the content. -->
+  <input type="file" id="gpx-input" multiple hidden>
+
+  <!-- Leaflet first (may fail offline on very first run), then the app. -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="DesertNav PWA" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>طريق المخيم — النجبية</name></metadata>
+  <wpt lat="25.9790278" lon="48.7985"><name>بداية الطريق (النجبية)</name><desc>نقطة التقاء</desc><sym>Flag, Blue</sym><type>meet</type></wpt>
+  <wpt lat="26.0010556" lon="48.5308889"><name>مدخل المخيم</name><desc>مخيم</desc><sym>Campground</sym><type>camp</type></wpt>
+  <trk><name>طريق المخيم (النجبية ← المخيم)</name><trkseg>
+    <trkpt lat="25.9790278" lon="48.7985"></trkpt>
+    <trkpt lat="25.97975" lon="48.7925556"></trkpt>
+    <trkpt lat="25.9795" lon="48.78525"></trkpt>
+    <trkpt lat="25.9818333" lon="48.7613611"></trkpt>
+    <trkpt lat="25.9750278" lon="48.7249722"></trkpt>
+    <trkpt lat="25.9731111" lon="48.6803056"></trkpt>
+    <trkpt lat="25.9799444" lon="48.63525"></trkpt>
+    <trkpt lat="25.9881944" lon="48.6003611"></trkpt>
+    <trkpt lat="25.9886389" lon="48.5794167"></trkpt>
+    <trkpt lat="25.9859167" lon="48.5683889"></trkpt>
+    <trkpt lat="25.9826944" lon="48.5565"></trkpt>
+    <trkpt lat="25.9828333" lon="48.5501944"></trkpt>
+    <trkpt lat="25.9883333" lon="48.5425"></trkpt>
+    <trkpt lat="25.9912222" lon="48.5370833"></trkpt>
+    <trkpt lat="25.9923889" lon="48.5368611"></trkpt>
+    <trkpt lat="25.99325" lon="48.5356111"></trkpt>
+    <trkpt lat="25.9939444" lon="48.5343889"></trkpt>
+    <trkpt lat="25.9955278" lon="48.5339444"></trkpt>
+    <trkpt lat="25.99675" lon="48.5330278"></trkpt>
+    <trkpt lat="25.9978611" lon="48.5324722"></trkpt>
+    <trkpt lat="25.9990278" lon="48.5322778"></trkpt>
+    <trkpt lat="26.0000833" lon="48.5313889"></trkpt>
+    <trkpt lat="26.0003889" lon="48.5315556"></trkpt>
+    <trkpt lat="26.0010556" lon="48.5308889"></trkpt>
+  </trkseg></trk>
+</gpx>
