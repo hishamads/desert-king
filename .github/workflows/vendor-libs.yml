@@ -1,0 +1,20 @@
+# Copies the map libraries into ./lib so the app never depends on a CDN.
+name: Vendor map libraries
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/vendor-libs.yml']
+permissions:
+  contents: write
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p lib && cd lib
+          npm pack leaflet@1.9.4 >/dev/null 2>&1 && tar xzf leaflet-1.9.4.tgz
+          cp package/dist/leaflet.js package/dist/leaflet.css . && mkdir -p images && cp package/dist/images/* images/
+          rm -rf package leaflet-1.9.4.tgz && echo "leaflet-1.9.4" >> versions.txt && ls -la
+          cd .. && git config user.name "github-actions" && git config user.email "actions@github.com"
+          git add lib && git commit -m "Vendor Leaflet 1.9.4" && git push
