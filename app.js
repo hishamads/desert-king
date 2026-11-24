@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.5.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -121,7 +121,11 @@ const DEFAULT_SETTINGS = {
   wakeLock: true,    // keep screen on
   autoRadar: true,   // switch to radar automatically when tiles are missing
   headingUp: false,  // radar rotates with heading
-  layer: 'sat'
+  layer: 'sat',
+  uiLang: 'ar',      // app language: 'ar' | 'en'
+  voiceOn: true,     // spoken guidance
+  voiceLang: 'ar',   // voice language: 'ar' | 'en' (independent of the app language)
+  voiceVol: 1        // 0.3 … 1
 };
 
 /* =====================================================================
@@ -154,8 +158,11 @@ function bearing(lat1, lon1, lat2, lon2) {
 }
 
 /** 8-point Arabic cardinal direction. */
-function cardinal(deg) {
-  const names = ['شمال', 'شمال شرق', 'شرق', 'جنوب شرق', 'جنوب', 'جنوب غرب', 'غرب', 'شمال غرب'];
+function cardinal(deg, lang) {
+  lang = lang || LG.ui;
+  const names = lang === 'en'
+    ? ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']
+    : ['شمال', 'شمال شرق', 'شرق', 'جنوب شرق', 'جنوب', 'جنوب غرب', 'غرب', 'شمال غرب'];
   return names[Math.round(norm360(deg) / 45) % 8];
 }
 
@@ -173,8 +180,8 @@ function toDMS(deg, isLat) {
 
 function fmtDist(m) {
   if (m == null || isNaN(m)) return '--';
-  if (m < 1000) return `${Math.round(m)} م`;
-  return `${(m / 1000).toFixed(m < 10000 ? 2 : 1)} كم`;
+  if (m < 1000) return `${Math.round(m)} ${X('م', 'm')}`;
+  return `${(m / 1000).toFixed(m < 10000 ? 2 : 1)} ${X('كم', 'km')}`;
 }
 
 function fmtDuration(ms) {
@@ -186,8 +193,8 @@ function fmtDuration(ms) {
 /** Short duration for navigation: "1 س 12 د" / "12 د" / "< 1 د". */
 function fmtDurShort(ms) {
   const m = Math.round(ms / 60000);
-  if (m < 1) return 'أقل من دقيقة';
-  return m >= 60 ? `${Math.floor(m / 60)} س ${m % 60} د` : `${m} د`;
+  if (m < 1) return X('أقل من دقيقة', 'under a minute');
+  return m >= 60 ? `${Math.floor(m / 60)} ${X('س', 'h')} ${m % 60} ${X('د', 'min')}` : `${m} ${X('د', 'min')}`;
 }
 
 const MODE_BADGE_TEXT = 'رادار — بدون خرائط';
@@ -901,7 +908,7 @@ const Guide = {
     MapView.renderPlan();
     MapView.renderGuide();
     UI.frame();
-    if (!silent) UI.toast('🧭 بدأ التوجيه إلى: ' + S.target.name);
+    if (!silent) { UI.toast('🧭 بدأ التوجيه إلى: ' + S.target.name); Voice.onStart(S.target); }
   },
 
   stop() {
@@ -985,6 +992,7 @@ const Guide = {
       UI.toast(S.rec.status === 'recording'
         ? '🏜️ دخلت الطريق غير المعبّد — التسجيل يعمل'
         : '🏜️ بداية غير المعبّد — اضغط ● لتسجيل مسارك', 6000);
+      Voice.onUnpaved();
     }
     if (kind) t.lastKind = kind;
 
@@ -994,10 +1002,12 @@ const Guide = {
       $('#guide').classList.add('arrived');
       navigator.vibrate && navigator.vibrate([250, 120, 250, 120, 400]);
       UI.toast('🎯 وصلت إلى الهدف: ' + t.name, 6000);
+      Voice.onArrive(t);
     } else if (this.arrived && t.finalDist > arriveR * 3) {
       this.arrived = false;
       $('#guide').classList.remove('arrived');
     }
+    Voice.tick(t);
     MapView.renderGuide();
   },
 
@@ -1020,11 +1030,11 @@ const Guide = {
     const nx = t.steps && t.steps.find(s => s.along > t.along - 20);   // keep a step visible until ~20 m past it
     if (nx) {
       const d = nx.along - t.along;
-      text = (d < 40 ? 'الآن: ' : `بعد ${fmtDist(d)}: `) + nx.text;
+      text = (d < 40 ? X('الآن: ', 'Now: ') : X(`بعد ${fmtDist(d)}: `, `In ${fmtDist(d)}: `)) + stepLabel(nx, LG.ui, false);
     } else if (t.mode === 'track') {
-      text = `اتبع المسار — اتجه ${cardinal(t.brg)}`;
+      text = X(`اتبع المسار — اتجه ${cardinal(t.brg)}`, `Follow the track — head ${cardinal(t.brg)}`);
     } else {
-      text = `اتجه ${cardinal(t.brg)} — ${fmtDist(t.dist)}`;
+      text = X(`اتجه ${cardinal(t.brg)} — ${fmtDist(t.dist)}`, `Head ${cardinal(t.brg)} — ${fmtDist(t.dist)}`);
     }
     nextEl.textContent = text;
 
@@ -1033,16 +1043,16 @@ const Guide = {
     const v = S.pos.speed;
     if (v && v > 1) {
       const ms = t.remaining / v * 1000, at = new Date(Date.now() + ms);
-      $('#guide-eta').textContent = `${fmtDurShort(ms)} · وصول ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+      $('#guide-eta').textContent = `${fmtDurShort(ms)} · ${X('وصول', 'arrive')} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
     } else $('#guide-eta').textContent = '';
     $('#guide-brg').textContent = `${Math.round(t.brg)}°`;
-    $('#guide-card').textContent = cardinal(t.brg);
+    $('#guide-card').textContent = X(cardinal(t.brg, 'ar'), cardinal(t.brg, 'en').toUpperCase());
 
     // Arrow: relative to where the phone/vehicle points when heading is known.
     const rel = S.heading != null ? angleDiff(t.brg, S.heading) : t.brg;
     $('#guide-arrow').style.transform = `rotate(${rel}deg)`;
     const off = t.mode === 'track' && t.offTrack > 80;
-    noteEl.textContent = off ? `⚠️ خارج المسار بـ ${fmtDist(t.offTrack)}`
+    noteEl.textContent = off ? `${X('⚠️ خارج المسار بـ ', '⚠️ Off route by ')}${fmtDist(t.offTrack)}`
       : (S.heading == null ? 'السهم بالنسبة للشمال — تحرّك أو فعّل البوصلة' : '');
     noteEl.classList.toggle('warn', off);
 
@@ -1052,6 +1062,211 @@ const Guide = {
       kindEl.classList.toggle('off', kind !== 'road');
       kindEl.hidden = false;
     } else kindEl.hidden = true;
+  }
+};
+
+/** Text of a plan step in 'ar' or 'en' (older saved plans keep their Arabic text). */
+function stepLabel(st, lang, forVoice) {
+  lang = lang || LG.ui;
+  if (st.m) return Router.stepText({ maneuver: st.m, name: st.nm }, lang, forVoice);
+  const nm = Voice.nm(st.to, lang);
+  if (st.sp === 'off') return lang === 'en' ? 'Enter the unpaved section — follow the saved track' : 'ادخل غير المعبّد — اتبع المسار المحفوظ';
+  if (st.sp === 'direct') return lang === 'en' ? 'End of the paved road — head straight to the destination' : 'نهاية الطريق المعبّد — اتجه مباشرة نحو الوجهة';
+  if (st.sp === 'arrive') return lang === 'en' ? 'Arrive' + (nm ? ' at ' + nm : ' at your destination') : 'الوصول إلى ' + (st.to || '');
+  return st.text || '';
+}
+
+/* =====================================================================
+ * §10a VOICE — spoken guidance (Web Speech API, works offline)
+ * ---------------------------------------------------------------------
+ * The voice language (ar/en) is independent of the app language. iOS only
+ * allows speech after a user gesture, so the first tap unlocks it. Voices
+ * come from the phone (iPhone: Settings → Accessibility → Spoken Content
+ * → Voices). Output goes through whatever audio route is active, e.g. the
+ * car's Bluetooth / CarPlay audio.
+ * Announcements: route start, each turn (≈1 km, ≈300 m, "now"), entering
+ * the unpaved part, off-route / back on route, remaining-distance
+ * milestones, "destination is on your left/right", arrival.
+ * ===================================================================== */
+const Voice = {
+  voices: [], warned: false, unlocked: false, lastText: '', lastLang: 'ar',
+
+  supported() { return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window; },
+
+  init() {
+    if (!this.supported()) return;
+    const load = () => { this.voices = speechSynthesis.getVoices() || []; this.refreshUI(); };
+    load();
+    if (speechSynthesis.addEventListener) speechSynthesis.addEventListener('voiceschanged', load);
+    const unlock = () => { this.unlock(); document.removeEventListener('pointerdown', unlock, true); };
+    document.addEventListener('pointerdown', unlock, true);
+  },
+
+  /** A silent utterance inside a tap unlocks speech on iOS. */
+  unlock() {
+    if (this.unlocked || !this.supported()) return;
+    this.unlocked = true;
+    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch (e) {}
+  },
+
+  /** Best installed voice for 'ar' / 'en' (prefers ar-SA / en-US). */
+  pick(lang) {
+    const base = lang === 'en' ? 'en' : 'ar';
+    const list = this.voices.filter(v => (v.lang || '').toLowerCase().replace('_', '-').startsWith(base));
+    if (!list.length) return null;
+    const pref = base === 'ar' ? ['ar-sa'] : ['en-us', 'en-gb'];
+    for (const pl of pref) { const v = list.find(x => x.lang.toLowerCase().replace('_', '-') === pl); if (v) return v; }
+    return list[0];
+  },
+
+  /** Speak `text`. urgent = interrupt what is being said (turn "now", off-route, arrival). */
+  say(text, opt = {}) {
+    if (!text || !this.supported() || (!S.settings.voiceOn && !opt.force)) return false;
+    const lang = opt.lang || S.settings.voiceLang || 'ar';
+    this.lastText = text; this.lastLang = lang;
+    if (!opt.urgent && speechSynthesis.pending) return false;           // do not pile up stale messages
+    const u = new SpeechSynthesisUtterance(text);
+    const v = this.pick(lang);
+    if (v) u.voice = v;
+    u.lang = v ? v.lang : (lang === 'en' ? 'en-US' : 'ar-SA');
+    u.volume = Math.max(0.1, Math.min(1, +S.settings.voiceVol || 1));
+    u.rate = lang === 'en' ? 1 : 0.95;
+    if (!v && this.voices.length && !this.warned) {
+      this.warned = true;
+      UI.toast('لا يوجد صوت متاح على الجهاز للغة المختارة — من الآيفون: الإعدادات ← إمكانية الوصول ← المحتوى المنطوق ← الأصوات', 8000);
+    }
+    const go = () => { try { speechSynthesis.resume(); speechSynthesis.speak(u); } catch (e) {} };
+    if (opt.urgent) { try { speechSynthesis.cancel(); } catch (e) {} setTimeout(go, 70); } else go();
+    return true;
+  },
+
+  repeat() { if (this.lastText) this.say(this.lastText, { lang: this.lastLang, urgent: true }); },
+
+  /* ----- phrase helpers ----- */
+  /** Spoken distance, rounded: "300 متر" / "1.5 كيلومتر" / "300 meters". */
+  dist(m, lang) {
+    const en = lang === 'en';
+    if (m < 1000) {
+      const r = m >= 100 ? Math.round(m / 50) * 50 : Math.max(10, Math.round(m / 10) * 10);
+      return en ? `${r} meters` : `${r} متر`;
+    }
+    const k = Math.round(m / 100) / 10;
+    return en ? `${k} ${k === 1 ? 'kilometer' : 'kilometers'}` : `${k} ${k === 1 ? 'كيلومتر' : 'كيلومتر'}`;
+  },
+  /** Names written in Arabic are not read by an English voice. */
+  nm(name, lang) { return (name && !(lang === 'en' && /[؀-ۿ]/.test(name))) ? name : ''; },
+
+  /** Announce the start of guidance. */
+  onStart(t) {
+    t.v = null;
+    const lang = S.settings.voiceLang, nm = this.nm(t.name, lang);
+    const d = t.remaining != null ? t.remaining : (S.pos ? haversine(S.pos.lat, S.pos.lon, t.lat, t.lon) : null);
+    const ds = d != null ? this.dist(d, lang) : '';
+    this.say(lang === 'en'
+      ? `Navigation started${nm ? ' to ' + nm : ''}.${ds ? ' Distance ' + ds + '.' : ''}`
+      : `بدأ التوجيه إلى ${nm}.${ds ? ' المسافة ' + ds + '.' : ''}`, { urgent: true });
+  },
+
+  onArrive(t) {
+    const lang = S.settings.voiceLang, nm = this.nm(t.name, lang);
+    this.say(lang === 'en' ? `You have arrived${nm ? ' at ' + nm : ''}.` : `وصلت إلى ${nm}.`, { urgent: true });
+  },
+
+  onUnpaved() {
+    const lang = S.settings.voiceLang;
+    this.say(lang === 'en' ? 'Entering the unpaved section.' : 'دخلت الطريق غير المعبّد.');
+  },
+
+  /** Called on every GPS fix while guiding. */
+  tick(t) {
+    if (!S.settings.voiceOn || !this.supported() || !S.pos) return;
+    const lang = S.settings.voiceLang, en = lang === 'en', now = Date.now();
+    const v = t.v || (t.v = { done: {}, first: true, offN: 0, offAt: 0, offOn: false, remDone: {}, dirN: 0, dirAt: 0 });
+    const speed = Math.max(0, S.pos.speed || 0);
+    const off = t.mode === 'track' && t.offTrack != null ? t.offTrack : 0;
+
+    // 1. Off route / back on route.
+    if (t.mode === 'track') {
+      if (off > 100) v.offN++; else v.offN = 0;
+      if (v.offN >= 3 && (!v.offOn || now - v.offAt > 45000) && !Guide.arrived) {
+        v.offOn = true; v.offAt = now;
+        const d = this.dist(off, lang);
+        this.say(en ? `You are off route by ${d}.` : `ابتعدت عن المسار بمقدار ${d}.`, { urgent: true });
+      } else if (v.offOn && off < 50) {
+        v.offOn = false;
+        this.say(en ? 'Back on route.' : 'عدت إلى المسار.', { urgent: true });
+      }
+    }
+
+    // 2. Turns (planned routes). far ≈1 km, near ≈ 20 s ahead (200–450 m), now ≈ 40 m.
+    if (t.steps && t.along != null && off < 150) {
+      const k = t.steps.findIndex(s => s.along > t.along - 20 && !(s.m && s.m.type === 'depart'));
+      if (k >= 0) {
+        const st = t.steps[k], d = st.along - t.along;
+        const prev = k > 0 ? t.steps[k - 1].along : 0;
+        const special = !!st.sp && st.sp !== 'arrive';
+        const stages = special
+          ? [['n', 200], ['w', 40]]
+          : [['f', (st.along - prev) > 1300 ? 1000 : -1], ['n', Math.min(450, Math.max(200, speed * 20))], ['w', Math.max(40, speed * 3)]];
+        const crossed = stages.filter(([id, thr]) => thr > 0 && d <= thr && !v.done[k + id]);
+        crossed.forEach(([id]) => { v.done[k + id] = 1; });
+        if (crossed.length && !v.first) {
+          const last = crossed[crossed.length - 1][0];
+          const instr = stepLabel(st, lang, true);
+          const msg = last === 'w' ? instr : (en ? `In ${this.dist(d, lang)}: ${instr}` : `بعد ${this.dist(d, lang)}: ${instr}`);
+          this.say(msg, { urgent: last === 'w' });
+        }
+      }
+    }
+
+    // 3. Remaining-distance milestones (tracks and direct points; fewer for planned routes).
+    if (t.remaining != null) {
+      const ms = t.isPlan ? [5000, 2000, 1000] : [10000, 5000, 2000, 1000, 500, 200];
+      let say = null;
+      for (const m of ms) if (t.remaining <= m && !v.remDone[m]) { v.remDone[m] = 1; say = m; }
+      if (say && !v.first && !Guide.arrived) {
+        const d = this.dist(t.remaining, lang);
+        this.say(en ? `${d} remaining.` : `المتبقي ${d}.`);
+      }
+    }
+
+    // 4. Direct-to-point: tell where the destination is when the heading is clearly off.
+    if (t.mode === 'point' && S.heading != null && speed > 3 && !Guide.arrived) {
+      const rel = angleDiff(t.brg, S.heading);
+      if (Math.abs(rel) > 50) v.dirN++; else v.dirN = 0;
+      if (v.dirN >= 4 && now - v.dirAt > 25000) {
+        v.dirAt = now; v.dirN = 0;
+        const side = Math.abs(rel) > 130 ? (en ? 'behind you' : 'خلفك') : rel > 0 ? (en ? 'to your right' : 'على يمينك') : (en ? 'to your left' : 'على يسارك');
+        this.say(en ? `The destination is ${side}.` : `الوجهة ${side}.`);
+      }
+    }
+    v.first = false;
+  },
+
+  toggle() {
+    S.settings.voiceOn = !S.settings.voiceOn;
+    saveSettings();
+    if (!S.settings.voiceOn && this.supported()) { try { speechSynthesis.cancel(); } catch (e) {} }
+    this.refreshUI();
+    UI.toast(S.settings.voiceOn ? '🔊 التوجيه الصوتي: تشغيل' : '🔇 التوجيه الصوتي: إيقاف');
+  },
+
+  test() {
+    this.unlock();
+    const lang = S.settings.voiceLang;
+    this.say(lang === 'en' ? 'Voice test. Voice guidance is working.' : 'اختبار الصوت. التوجيه الصوتي يعمل.', { urgent: true, force: true });
+  },
+
+  refreshUI() {
+    const b = $('#guide-voice');
+    if (b) b.textContent = S.settings.voiceOn ? '🔊' : '🔇';
+    const h = $('#voice-hint');
+    if (h) {
+      if (!this.supported()) h.textContent = X('هذا المتصفح لا يدعم الصوت', 'This browser does not support speech');
+      else if (this.voices.length && !this.pick(S.settings.voiceLang))
+        h.textContent = X('لا يوجد صوت لهذه اللغة على الجهاز — الإعدادات ← إمكانية الوصول ← المحتوى المنطوق ← الأصوات', 'No voice installed for this language — Settings → Accessibility → Spoken Content → Voices');
+      else h.textContent = '';
+    }
   }
 };
 
@@ -1074,11 +1289,38 @@ const Router = {
     'sharp right': 'بحدة لليمين', 'sharp left': 'بحدة لليسار', straight: 'مباشرة', uturn: 'للخلف'
   },
 
-  /** Arabic instruction from an OSRM step. */
-  stepText(st) {
+  MOD_EN: {
+    right: 'right', left: 'left', 'slight right': 'slightly right', 'slight left': 'slightly left',
+    'sharp right': 'sharply right', 'sharp left': 'sharply left', straight: 'straight', uturn: 'around'
+  },
+
+  /** Instruction from an OSRM-like step {maneuver:{type,modifier,exit}, name}, in 'ar' or 'en'.
+   *  forVoice drops Arabic road names from English speech (an English voice cannot read them). */
+  stepText(st, lang = 'ar', forVoice = false) {
     const m = st.maneuver || {};
+    let nm = st.name || '';
+    if (lang === 'en') {
+      if (forVoice && /[\u0600-\u06FF]/.test(nm)) nm = '';
+      const mod = this.MOD_EN[m.modifier] || '';
+      const on = nm ? ` onto ${nm}` : '';
+      if (m.modifier === 'uturn') return 'Make a U-turn' + on;
+      switch (m.type) {
+        case 'depart': return 'Head out' + (nm ? ` on ${nm}` : '');
+        case 'arrive': return 'End of the paved road';
+        case 'roundabout': case 'rotary': case 'roundabout turn':
+          return (m.exit ? `At the roundabout take exit ${m.exit}` : 'Enter the roundabout') + on;
+        case 'exit roundabout': case 'exit rotary': return 'Exit the roundabout' + on;
+        case 'merge': return `Merge ${mod}`.trim() + on;
+        case 'on ramp': return `Take the ramp ${mod}`.trim() + on;
+        case 'off ramp': return `Take the exit ${mod}`.trim() + on;
+        case 'fork': return `Keep ${mod || 'straight'} at the fork`.trim() + on;
+        case 'end of road': return `At the end of the road turn ${mod}`.trim() + on;
+        case 'continue': case 'new name': return `Continue ${mod || 'straight'}` + on;
+        default: return (m.modifier === 'straight' ? 'Continue straight' : `Turn ${mod}`.trim()) + on;
+      }
+    }
     const mod = this.MOD[m.modifier] || '';
-    const name = st.name ? ` — ${st.name}` : '';
+    const name = nm ? ` — ${nm}` : '';
     if (m.modifier === 'uturn') return 'استدر للخلف' + name;
     switch (m.type) {
       case 'depart': return 'انطلق' + name;
@@ -1111,7 +1353,9 @@ const Router = {
       let acc = 0;
       const steps = [];
       for (const st of (rt.legs[0] && rt.legs[0].steps) || []) {
-        steps.push({ rel: acc, text: this.stepText(st), type: st.maneuver && st.maneuver.type });
+        const mv = st.maneuver || {};
+        steps.push({ rel: acc, text: this.stepText(st), type: mv.type,
+                     m: { type: mv.type, modifier: mv.modifier, exit: mv.exit }, nm: st.name || '' });
         acc += st.distance;
       }
       return {
@@ -1210,15 +1454,15 @@ const Router = {
       if (part.kind === 'road' && part.steps) {
         for (const s of part.steps) {
           if (s.type === 'arrive' && pi < parts.length - 1) continue;   // replaced below
-          steps.push({ along: startAlong + s.rel, text: s.text, kind: 'road' });
+          steps.push({ along: startAlong + s.rel, text: s.text, kind: 'road', m: s.m, nm: s.nm });
         }
       } else if (part.kind === 'offroad') {
-        steps.push({ along: startAlong, text: 'ادخل غير المعبّد — اتبع المسار المحفوظ', kind: 'offroad' });
+        steps.push({ along: startAlong, text: 'ادخل غير المعبّد — اتبع المسار المحفوظ', kind: 'offroad', sp: 'off' });
       } else if (part.kind === 'direct' && pi > 0) {
-        steps.push({ along: startAlong, text: 'نهاية الطريق المعبّد — اتجه مباشرة نحو الوجهة', kind: 'direct' });
+        steps.push({ along: startAlong, text: 'نهاية الطريق المعبّد — اتجه مباشرة نحو الوجهة', kind: 'direct', sp: 'direct' });
       }
     });
-    steps.push({ along, text: 'الوصول إلى ' + to.name, kind: segKind[segKind.length - 1] || 'road' });
+    steps.push({ along, text: 'الوصول إلى ' + to.name, kind: segKind[segKind.length - 1] || 'road', sp: 'arrive', to: to.name });
     steps.sort((a, b) => a.along - b.along);
     return {
       name: to.name, from: { lat: from.lat, lon: from.lon, name: from.name }, to: { lat: to.lat, lon: to.lon, name: to.name },
@@ -2730,7 +2974,7 @@ const Vector = {
     };
     const archive = new pmtiles.PMTiles(source);
     const layer = protomapsL.leafletLayer({
-      url: archive, flavor: 'light', lang: 'ar', maxDataZoom: meta.maxzoom || 13,
+      url: archive, flavor: 'light', lang: LG.ui === 'en' ? 'en' : 'ar', maxDataZoom: meta.maxzoom || 13,
       attribution: '© OpenStreetMap · Protomaps'
     });
     if (layer.setZIndex) layer.setZIndex(4);
@@ -2901,7 +3145,7 @@ const Search = {
       <button class="srch-item" data-act="srch-pick" data-k="${k}">
         <span class="srch-ico">${r.icon}</span>
         <span class="srch-txt"><b>${escapeHtml(r.name)}</b>${r.en ? ` <small class="ltr">${escapeHtml(r.en)}</small>` : ''}<br>
-        <small>${escapeHtml(r.label)}${r.d ? ' · <span class="ltr">' + fmtDist(r.d) + '</span>' : ''}</small></span>
+        <small><span>${escapeHtml(r.label)}</span>${r.d ? ' · <span class="ltr">' + fmtDist(r.d) + '</span>' : ''}</small></span>
       </button>`).join('');
   },
 
@@ -2956,8 +3200,8 @@ const WakeLock = {
 
   refreshUI() {
     $('#set-wakelock').checked = !!S.settings.wakeLock;
-    $('#wl-state').textContent = !this.supported() ? '(غير مدعوم — حدّث النظام)' :
-      (this.sentinel ? '(مفعّل ✓)' : (S.settings.wakeLock ? '(بانتظار التفعيل)' : ''));
+    $('#wl-state').textContent = !this.supported() ? X('(غير مدعوم — حدّث النظام)', '(not supported — update iOS)') :
+      (this.sentinel ? X('(مفعّل ✓)', '(on ✓)') : (S.settings.wakeLock ? X('(بانتظار التفعيل)', '(waiting)') : ''));
   }
 };
 
@@ -3148,7 +3392,22 @@ function updateCompass() {
   if (n) n.style.transform = `rotate(${-rot}deg)`;
 }
 
+/** Apply the app language to every screen (static text is translated by lang.js). */
+function applyLanguage() {
+  LG.setUI(S.settings.uiLang);
+  try { Lists.render(); } catch (e) {}
+  try { if (S.target) Guide.render(); } catch (e) {}
+  try { MapView.renderWaypoints(); } catch (e) {}
+  try { if (S.settings.layer === 'vec' && MapView.map) MapView.setLayer('vec', true); } catch (e) {}
+  try { Vector.refreshUI(); WakeLock.refreshUI(); Voice.refreshUI(); } catch (e) {}
+}
+
 function syncSettingsForm() {
+  $('#set-voice').checked = !!S.settings.voiceOn;
+  $('#set-vlang').value = S.settings.voiceLang;
+  $('#set-vvol').value = S.settings.voiceVol;
+  $('#set-ulang').value = S.settings.uiLang;
+  Voice.refreshUI();
   $('#set-autoradar').checked = !!S.settings.autoRadar;
   $('#set-mindist').value = S.settings.minDist;
   $('#set-interval').value = S.settings.interval;
@@ -3375,6 +3634,9 @@ const Actions = {
   'dl-ksa'() { Offline.presetKSA(); },
   'dl-ksa-sat'() { Offline.presetKSASat(); },
   'vec-dl'() { Vector.download(); },
+  'voice-toggle'() { Voice.unlock(); Voice.toggle(); },
+  'voice-repeat'() { Voice.repeat(); },
+  'voice-test'() { Voice.test(); },
   'app-update'() { forceUpdate(); },
   'vec-rm'() { Vector.remove(); },
   'dl-cancel'() { Offline.abort = true; },
@@ -3414,6 +3676,10 @@ function bindUI() {
   });
 
   $('#set-wakelock').addEventListener('change', e => WakeLock.set(e.target.checked));
+  $('#set-voice').addEventListener('change', e => { S.settings.voiceOn = e.target.checked; saveSettings(); if (!e.target.checked) { try { speechSynthesis.cancel(); } catch (x) {} } Voice.refreshUI(); });
+  $('#set-vlang').addEventListener('change', e => { S.settings.voiceLang = e.target.value; saveSettings(); Voice.warned = false; Voice.refreshUI(); Voice.test(); });
+  $('#set-vvol').addEventListener('change', e => { S.settings.voiceVol = +e.target.value; saveSettings(); Voice.test(); });
+  $('#set-ulang').addEventListener('change', e => { S.settings.uiLang = e.target.value; saveSettings(); applyLanguage(); });
   $('#set-headingup').addEventListener('change', e => {
     S.settings.headingUp = e.target.checked; saveSettings(); syncSettingsForm(); Radar.draw(); MapView.applyBearing(); updateCompass();
   });
@@ -3535,6 +3801,8 @@ async function boot() {
   // Load persisted data.
   const saved = await Store.kvGet('settings', null).catch(() => null);
   if (saved) S.settings = { ...DEFAULT_SETTINGS, ...saved };
+  LG.setUI(S.settings.uiLang);
+  Voice.init();
   S.tracks = await Store.getAll('tracks').catch(() => []);
   S.waypoints = await Store.getAll('waypoints').catch(() => []);
   if (!S.waypoints.length) {

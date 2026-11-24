@@ -102,10 +102,11 @@
       <div class="nt-arrow">
         <svg id="guide-arrow" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,8 82,88 50,70 18,88"/></svg>
       </div>
-      <div class="nt-main">
+      <div class="nt-main" data-act="voice-repeat">
         <div class="nt-next" id="guide-next">--</div>
         <div class="nt-sub" id="guide-name">—</div>
       </div>
+      <button id="guide-voice" class="nt-voice" data-act="voice-toggle" aria-label="الصوت">🔊</button>
     </div>
     <div id="guide-bottom" class="nav-bottom" hidden>
       <button class="nb-x" data-act="guide-stop" aria-label="إنهاء الملاحة">✕</button>
@@ -252,6 +253,25 @@
     </div>
 
     <div class="menu-group">
+      <h3>🔊 الصوت واللغة</h3>
+      <label class="switch-row">
+        <span>التوجيه الصوتي</span>
+        <input type="checkbox" id="set-voice">
+      </label>
+      <label class="fld">لغة الصوت
+        <select id="set-vlang"><option value="ar">العربية</option><option value="en">English</option></select>
+      </label>
+      <label class="fld">مستوى الصوت
+        <input type="range" id="set-vvol" min="0.3" max="1" step="0.1">
+      </label>
+      <label class="fld">لغة التطبيق
+        <select id="set-ulang"><option value="ar">العربية</option><option value="en">English</option></select>
+      </label>
+      <button class="btn btn-block" data-act="voice-test">🔈 تجربة الصوت</button>
+      <p id="voice-hint" class="muted" style="font-size:12px;margin:6px 0 0"></p>
+    </div>
+
+    <div class="menu-group">
       <h3>الخرائط بدون إنترنت</h3>
       <button class="btn btn-block btn-primary" data-act="dl-open">⬇ حفظ المنطقة للعمل بدون إنترنت</button>
       <p class="hint" id="storage-info">جارٍ حساب المساحة…</p>
@@ -363,6 +383,7 @@
   <script src="./lib/leaflet-rotate.js"></script>
   <script src="./lib/pmtiles.js"></script>
   <script src="./lib/protomaps-leaflet.js"></script>
+  <script src="lang.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

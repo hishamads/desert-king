@@ -397,3 +397,9 @@ body.sheet-open .toast { top: calc(var(--sat) + 12px); bottom: auto; }
 /* Compass button (Google-style): needle points north; blue ring when heading-up */
 .fab-compass #cmp-needle { transition: transform .25s ease-out; }
 .fab-compass.on { box-shadow: 0 0 0 3px var(--blue), var(--shadow); }
+
+/* voice button in the nav banner */
+.nt-voice { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(255,255,255,.18); color: #fff; font-size: 20px; }
+/* English / LTR: flip the switch knob */
+html.lang-en .switch-row input::after { right: auto; left: 3px; transition: left .2s; }
+html.lang-en .switch-row input:checked::after { left: 23px; right: auto; }
