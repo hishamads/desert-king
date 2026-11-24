@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -61,6 +61,7 @@ const LAYER_ORDER = ['sat', 'topo', 'osm'];
 /* All-Saudi terrain background (downloaded once from the «حفظ المنطقة» sheet). */
 const KSA_BOUNDS = { n: 32.6, s: 16.0, w: 34.4, e: 55.8 };
 const BG_LAYER = 'topo', BG_MAX_ZOOM = 9;
+const BG_SAT_MAX_ZOOM = 11;   // whole-Kingdom satellite pack (≈350 MB) — upscaled when zoomed in further
 
 /* Waypoint categories: key → Arabic label, emoji icon, Garmin GPX <sym>. */
 const CATS = {
@@ -1423,10 +1424,12 @@ const MapView = {
   /** Switch base layer (and rebuild the fallback stack). */
   setLayer(key, silent) {
     if (!LAYERS[key]) key = 'sat';
-    for (const l of [this.base, this.fb, this.bg]) if (l) this.map.removeLayer(l);
+    for (const l of [this.base, this.fb, this.bg, this.bgSat]) if (l) this.map.removeLayer(l);
+    // Bottom → top: Kingdom terrain (z≤9), Kingdom satellite (z≤11), other detailed layer, selected layer.
     this.bg = this.makeLayer(BG_LAYER, { cacheOnly: true, maxNative: BG_MAX_ZOOM, zIndex: 1 });
-    this.fb = this.makeLayer(key === 'sat' ? 'topo' : 'sat', { cacheOnly: true, zIndex: 2 });
-    this.base = this.makeLayer(key, { zIndex: 3 });
+    this.bgSat = this.makeLayer('sat', { cacheOnly: true, maxNative: BG_SAT_MAX_ZOOM, zIndex: 2 });
+    this.fb = this.makeLayer(key === 'sat' ? 'topo' : 'sat', { cacheOnly: true, zIndex: 3 });
+    this.base = this.makeLayer(key, { zIndex: 4 });
     S.settings.layer = key;
     saveSettings();
     updateLayerCards();
@@ -2202,6 +2205,16 @@ const Offline = {
     $('#dl-status').textContent = 'المنطقة: المملكة كاملة — اضغط «ابدأ التنزيل»';
   },
 
+  /** Preset: satellite imagery for the whole Kingdom up to zoom 11 (smallest useful full map). */
+  presetKSASat() {
+    this.bounds = { ...KSA_BOUNDS };
+    $('#dl-layer').value = 'sat';
+    $('#dl-zmin').value = 5;
+    $('#dl-zmax').value = BG_SAT_MAX_ZOOM;
+    this.estimate();
+    $('#dl-status').textContent = 'المنطقة: المملكة كاملة (قمر صناعي) — يُفضّل واي فاي — اضغط «ابدأ التنزيل»';
+  },
+
   estimate() {
     let zmin = +$('#dl-zmin').value, zmax = +$('#dl-zmax').value;
     if (zmin > zmax) [zmin, zmax] = [zmax, zmin];
@@ -2957,6 +2970,7 @@ const Actions = {
   'dl-open'() { Offline.openSheet(); },
   'dl-start'() { Offline.start(); },
   'dl-ksa'() { Offline.presetKSA(); },
+  'dl-ksa-sat'() { Offline.presetKSASat(); },
   'dl-cancel'() { Offline.abort = true; },
   'tiles-clear'() { Offline.clearAll(); },
   'region-show'(el) {
