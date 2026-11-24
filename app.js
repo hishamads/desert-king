@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -273,7 +273,18 @@ const Store = {
   useLS: false,
 
   /** Open (or create/upgrade) the database. Never rejects: falls back to LS. */
-  open() {
+  async open() {
+    // A transient IndexedDB failure must not silently switch to an empty
+    // localStorage (the saved places would look "erased"): retry once.
+    await this._open();
+    if (this.useLS && 'indexedDB' in window) {
+      this.useLS = false;
+      await new Promise(r => setTimeout(r, 400));
+      await this._open();
+    }
+  },
+
+  _open() {
     return new Promise(resolve => {
       if (!('indexedDB' in window)) { this.useLS = true; return resolve(); }
       let req;
@@ -316,10 +327,12 @@ const Store = {
   async put(store, obj) {
     if (this.useLS) { const m = this._lsLoad(store); m[obj.id] = obj; this._lsSave(store, m); return; }
     await this._tx(store, 'readwrite', s => s.put(obj));
+    if (store === 'waypoints') scheduleWpBackup();
   },
   async del(store, id) {
     if (this.useLS) { const m = this._lsLoad(store); delete m[id]; this._lsSave(store, m); return; }
     await this._tx(store, 'readwrite', s => s.delete(id));
+    if (store === 'waypoints') scheduleWpBackup();
   },
   async kvGet(key, def = null) {
     if (this.useLS) { const m = this._lsLoad('kv'); return key in m ? m[key] : def; }
@@ -1372,6 +1385,9 @@ const MapView = {
     this.map.on('contextmenu', e => Place.openPin(e.latlng.lat, e.latlng.lng));
     // Reset tile counters each time the view changes (for radar fallback).
     this.map.on('movestart zoomstart', () => { this.tileOk = 0; this.tileErr = 0; });
+    // Markers scale with zoom (small when zoomed out, full size up close).
+    this.map.on('zoomend', () => this.scaleMarkers());
+    this.scaleMarkers();
     return true;
   },
 
@@ -1512,6 +1528,14 @@ const MapView = {
   },
 
   /* ---- waypoints ---- */
+  scaleMarkers() {
+    const z = this.map.getZoom();
+    const k = Math.max(0.5, Math.min(1.15, 0.5 + (z - 5) * 0.075));   // z5 → 0.5 … z14+ → ~1.15
+    const el = this.map.getContainer();
+    el.style.setProperty('--mk', k.toFixed(2));
+    el.classList.toggle('mk-nolabel', z < 9);                           // hide names when far out
+  },
+
   renderWaypoints() {
     if (!this.map) return;
     this.wpLayer.clearLayers();
@@ -2466,10 +2490,10 @@ const GPX = {
    * or a track with the same name) are skipped, so pressing twice is safe. */
   BUNDLED: ['./كشتات-حسب-المنطقة.gpx', './طريق-المخيم.gpx'],
 
-  async loadBundled() {
+  async loadBundled(silent) {
     let nt = 0, nw = 0, skipped = 0;
     const all = [];
-    UI.toast('⏳ جارٍ تحميل مواقع الكشتات…');
+    if (!silent) UI.toast('⏳ جارٍ تحميل مواقع الكشتات…');
     for (const url of this.BUNDLED) {
       try {
         const res = await fetch(encodeURI(url));
@@ -2484,22 +2508,24 @@ const GPX = {
           await Store.put('waypoints', w); S.waypoints.push(w); nw++; all.push([w.lat, w.lon]);
         }
       } catch (e) {
-        UI.toast('تعذر تحميل المواقع — تأكد من الاتصال بالإنترنت أول مرة', 5000);
-        return;
+        if (!silent) UI.toast('تعذر تحميل المواقع — تأكد من الاتصال بالإنترنت أول مرة', 5000);
+        return false;
       }
     }
     if (nt || nw) {
       MapView.renderTracks();
       MapView.renderWaypoints();
-      if (all.length) {
+      if (all.length && !silent) {
         if (S.view === 'map') MapView.fitPoints(all.map(p => [p[0], p[1]]));
         else { setFollow(false); Radar.center = { lat: all[0][0], lon: all[0][1] }; Radar.draw(); }
       }
+      Radar.draw();
       Lists.render();
-      UI.toast(`✅ تمت إضافة ${nw} موقع و ${nt} مسار`);
-    } else {
+      if (!silent) UI.toast(`✅ تمت إضافة ${nw} موقع و ${nt} مسار`);
+    } else if (!silent) {
       UI.toast(skipped ? '✔ مواقع الكشتات موجودة مسبقاً' : 'لا توجد مواقع جديدة');
     }
+    return true;
   }
 };
 
@@ -3033,6 +3059,26 @@ async function registerSW() {
   }
 }
 
+/* Small safety copy of the saved places in localStorage, so they can be
+ * restored if the IndexedDB database is ever emptied or unavailable. */
+const WP_BACKUP_KEY = 'dn_backup_waypoints';
+let _wpBackupT = null;
+function scheduleWpBackup() {
+  clearTimeout(_wpBackupT);
+  _wpBackupT = setTimeout(() => {
+    try { localStorage.setItem(WP_BACKUP_KEY, JSON.stringify(S.waypoints)); } catch (e) {}
+  }, 300);
+}
+
+async function restoreWpBackup() {
+  let bak = [];
+  try { bak = JSON.parse(localStorage.getItem(WP_BACKUP_KEY) || '[]'); } catch (e) {}
+  if (!Array.isArray(bak) || !bak.length) return 0;
+  for (const w of bak) { await Store.put('waypoints', w).catch(() => {}); }
+  S.waypoints = bak;
+  return bak.length;
+}
+
 async function boot() {
   await Store.open();
 
@@ -3041,6 +3087,10 @@ async function boot() {
   if (saved) S.settings = { ...DEFAULT_SETTINGS, ...saved };
   S.tracks = await Store.getAll('tracks').catch(() => []);
   S.waypoints = await Store.getAll('waypoints').catch(() => []);
+  if (!S.waypoints.length) {
+    const n = await restoreWpBackup();
+    if (n) setTimeout(() => UI.toast(`✔ تمت استعادة ${n} موقع من النسخة الاحتياطية`), 1500);
+  } else scheduleWpBackup();
   S.regions = (await Store.kvGet('regions', []).catch(() => [])) || [];
   await Recorder.restore();
 
@@ -3068,6 +3118,11 @@ async function boot() {
   if (!window.isSecureContext) $('#start-hint').textContent = '⚠️ الصفحة ليست عبر HTTPS — لن يعمل GPS ولا العمل دون اتصال.';
 
   registerSW();
+
+  // First run (or storage was wiped): add the bundled camping sites automatically.
+  if (!(await Store.kvGet('sitesLoaded', false).catch(() => false))) {
+    if (await GPX.loadBundled(true)) Store.kvSet('sitesLoaded', true).catch(() => {});
+  }
 }
 
 document.addEventListener('DOMContentLoaded', boot);
