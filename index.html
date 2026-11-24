@@ -38,11 +38,14 @@
 
     <!-- 1. Top: search pill (= «إلى أين؟») + quick chips -->
     <div class="topbar" id="topbar">
+      <div class="top-row">
       <button class="search-pill" data-act="plan-open">
-        <span class="sp-logo">🧭</span>
-        <span class="sp-text">إلى أين؟</span>
-        <i id="gps-dot" class="dot dot-off" title="حالة GPS"></i>
-      </button>
+          <span class="sp-logo">🧭</span>
+          <span class="sp-text">إلى أين؟</span>
+          <i id="gps-dot" class="dot dot-off" title="حالة GPS"></i>
+        </button>
+        <button class="exit-btn" data-act="exit" aria-label="خروج" title="خروج">⏻</button>
+      </div>
       <div class="chips">
         <button class="chip" data-act="wp-open">📍 حفظ نقطة</button>
         <button class="chip" data-act="rec-backtrack-any">↩ العودة على الأثر</button>

@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_TILES = 8000;                  // safety cap per area
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -483,6 +483,13 @@ const GPS = {
     }
   },
 
+  /** Stop the GPS watch (used by «خروج»). */
+  stop() {
+    if (S.gpsWatchId != null) navigator.geolocation.clearWatch(S.gpsWatchId);
+    S.gpsWatchId = null;
+    this.setStatus('off');
+  },
+
   setStatus(st) {
     const dot = $('#gps-dot');
     dot.className = 'dot dot-' + st;
@@ -513,11 +520,18 @@ const Heading = {
       return false;
     }
     if (!this.listening) {
-      const evt = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
-      window.addEventListener(evt, ev => this.onOrient(ev), true);
+      this._evt = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
+      this._fn = ev => this.onOrient(ev);
+      window.addEventListener(this._evt, this._fn, true);
       this.listening = true;
     }
     return true;
+  },
+
+  /** Stop listening to the compass (used by «خروج»). */
+  disable() {
+    if (this.listening) window.removeEventListener(this._evt, this._fn, true);
+    this.listening = false;
   },
 
   onOrient(e) {
@@ -2721,6 +2735,36 @@ const Actions = {
     await Heading.enable();
     if (S.settings.wakeLock) await WakeLock.acquire();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  },
+
+  /* ----- «خروج»: end the session and return the screen to its first state.
+   * Saved points, tracks, downloaded areas and settings are NOT touched.
+   * (iOS does not let a Home-Screen web app close itself, so we stop the
+   * sensors and show the start screen; the user swipes the app away.) ----- */
+  async exit() {
+    if (S.rec.status !== 'idle' && Recorder.pointCount() >= 2) {
+      if (confirm('يوجد تسجيل مسار جارٍ.\nحفظه قبل الخروج؟')) {
+        if (S.rec.status === 'recording') S.rec.elapsedMs += Date.now() - S.rec.segStart;
+        await Recorder.save();
+      } else if (confirm('سيُحذف التسجيل الحالي. متابعة الخروج؟')) {
+        Recorder.discard(true);
+      } else return;
+    } else if (S.rec.status !== 'idle') {
+      Recorder.discard(true);
+    } else if (!confirm('الخروج وإعادة الشاشة لوضعها الأول؟\n(نقاطك ومساراتك تبقى محفوظة)')) {
+      return;
+    }
+    if (S.target) Guide.stop();
+    UI.closeSheet();
+    if (typeof Place !== 'undefined') Place.clearPin();
+    GPS.stop();
+    Heading.disable();
+    if (WakeLock.sentinel) { try { await WakeLock.sentinel.release(); } catch (e) {} WakeLock.sentinel = null; }
+    S.started = false;
+    S.follow = true;
+    setFollow(true);
+    if (MapView.map) { MapView.map.setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lon], 6, { animate: false }); MapView.firstFix = true; }
+    $('#start-overlay').hidden = false;
   },
 
   /* ----- recording ----- */
