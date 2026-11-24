@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -71,6 +71,8 @@ const CATS = {
   meet:   { label: 'نقطة التقاء', icon: '🚩', sym: 'Flag, Blue' },
   danger: { label: 'خطر',         icon: '⚠️', sym: 'Skull and Crossbones' },
   car:    { label: 'سيارة',       icon: '🚙', sym: 'Car' },
+  home:   { label: 'منزل',        icon: '🏠', sym: 'Residence' },
+  farm:   { label: 'مزرعة',       icon: '🌴', sym: 'Farm' },
   other:  { label: 'عامة',        icon: '📍', sym: 'Waypoint' }
 };
 
@@ -2459,6 +2461,8 @@ const GPX = {
     if (s.includes('skull') || s.includes('danger') || s.includes('hazard')) return 'danger';
     if (s.includes('car') || s.includes('vehicle')) return 'car';
     if (s.includes('flag')) return 'meet';
+    if (s.includes('residence') || s.includes('house') || s.includes('home')) return 'home';
+    if (s.includes('farm')) return 'farm';
     return 'other';
   },
 
