@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.5.1';
+const APP_VERSION = '2.6.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -125,6 +125,7 @@ const DEFAULT_SETTINGS = {
   uiLang: 'ar',      // app language: 'ar' | 'en'
   voiceOn: true,     // spoken guidance
   voiceLang: 'ar',   // voice language: 'ar' | 'en' (independent of the app language)
+  natKey: '',        // Saudi National Address (SPL) API subscription key
   voiceVol: 1        // 0.3 … 1
 };
 
@@ -3125,8 +3126,39 @@ const Search = {
 
   /** Online lookup (OpenStreetMap Nominatim) for any place in the world — only when connected.
    *  Rate-limited by the caller (≥ 900 ms after typing stops, min 3 chars). */
+  /** Saudi short address (4 letters + 4 digits, e.g. EMMA4120) via the official SPL API (needs a free key). */
+  async fetchShort(code) {
+    const key = (S.settings.natKey || '').trim();
+    this.onlineQ = code;
+    if (!key) { this.online = [{ name: code, sub: X('أضف مفتاح العنوان الوطني في الإعدادات', 'Add your National Address key in Settings'), lat: 0, lon: 0, icon: '🔑', label: X('العنوان الوطني', 'National Address'), type: 'nokey', d: 0 }]; this.render(); return; }
+    if (navigator.onLine === false) { this.online = []; this.render(); return; }
+    this.onlineBusy = true; this.render();
+    try {
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 10000);
+      const r = await fetch('https://apina.address.gov.sa/NationalAddress/GeoCodeByShortAddress/GeoCodeByShortlAddress?format=json&shortaddress=' + encodeURIComponent(code) + '&api_key=' + encodeURIComponent(key), { signal: ctl.signal });
+      clearTimeout(to);
+      const j = await r.json().catch(() => null);
+      const pts = [];
+      const walk = o => {                                  // find {lat, lon} pairs whatever the field names
+        if (!o || typeof o !== 'object') return;
+        const ks = Object.keys(o);
+        const la = ks.find(k => /^(lat|latitude|y)$/i.test(k)), lo = ks.find(k => /^(lon|lng|long|longitude|x)$/i.test(k));
+        if (la && lo && isFinite(+o[la]) && isFinite(+o[lo]) && (+o[la]) !== 0) { pts.push({ lat: +o[la], lon: +o[lo], o }); return; }
+        ks.forEach(k => walk(o[k]));
+      };
+      walk(j);
+      const txt = o => [o.BuildingNumber, o.StreetName, o.District, o.City].filter(Boolean).join('، ');
+      this.online = pts.slice(0, 5).map(x => ({ name: code, sub: txt(x.o), lat: x.lat, lon: x.lon, icon: '🏠', label: X('العنوان الوطني', 'National Address'), type: 'net', d: 0 }));
+      if (!this.online.length) this.online = [{ name: code, sub: r.status === 401 || r.status === 403 ? X('المفتاح غير صالح', 'Invalid key') : X('لم يُعثر على العنوان', 'Address not found'), lat: 0, lon: 0, icon: '⚠️', label: X('العنوان الوطني', 'National Address'), type: 'nokey', d: 0 }];
+    } catch (e) {
+      this.online = [{ name: code, sub: X('تعذّر الاتصال بخدمة العنوان الوطني', 'Could not reach the National Address service'), lat: 0, lon: 0, icon: '⚠️', label: X('العنوان الوطني', 'National Address'), type: 'nokey', d: 0 }];
+    }
+    this.onlineBusy = false; this.render();
+  },
+
   async fetchOnline(q) {
     q = (q || '').trim();
+    if (/^[A-Za-z]{4}\s?\d{4}$/.test(q)) return this.fetchShort(q.replace(/\s/g, '').toUpperCase());
     if (q.length < 3 || navigator.onLine === false || parsePair(q)) { this.online = []; this.onlineQ = q; this.onlineBusy = false; this.render(); return; }
     if (q === this.onlineQ && this.online.length) return;
     this.onlineBusy = true; this.render();
@@ -3166,7 +3198,7 @@ const Search = {
   render() {
     const q = $('#srch-q').value;
     this.results = this.query(q);
-    if (this.onlineQ === q.trim()) {
+    if (this.onlineQ.replace(/\s/g, '').toUpperCase() === q.trim().replace(/\s/g, '').toUpperCase()) {
       const have = this.results;
       this.results = have.concat(this.online.filter(o => !have.some(h => Math.abs(h.lat - o.lat) < 0.002 && Math.abs(h.lon - o.lon) < 0.002)));
     }
@@ -3185,6 +3217,7 @@ const Search = {
   pick(k) {
     const r = this.results && this.results[k];
     if (!r) return;
+    if (r.type === 'nokey') { if (!S.settings.natKey) { UI.openSheet('sheet-menu'); setTimeout(() => $('#set-natkey') && $('#set-natkey').focus(), 300); } return; }
     setFollow(false);
     if (S.view === 'map' && MapView.map) MapView.map.setView([r.lat, r.lon], Math.max(MapView.map.getZoom(), r.type === 'idx' && r.label === 'مدينة' ? 11 : 14));
     else { Radar.center = { lat: r.lat, lon: r.lon }; Radar.draw(); }
@@ -3440,6 +3473,7 @@ function syncSettingsForm() {
   $('#set-vlang').value = S.settings.voiceLang;
   $('#set-vvol').value = S.settings.voiceVol;
   $('#set-ulang').value = S.settings.uiLang;
+  $('#set-natkey').value = S.settings.natKey || '';
   Voice.refreshUI();
   $('#set-autoradar').checked = !!S.settings.autoRadar;
   $('#set-mindist').value = S.settings.minDist;
@@ -3709,6 +3743,7 @@ function bindUI() {
   });
 
   $('#set-wakelock').addEventListener('change', e => WakeLock.set(e.target.checked));
+  $('#set-natkey').addEventListener('change', e => { S.settings.natKey = e.target.value.trim(); saveSettings(); UI.toast('✓ تم حفظ المفتاح'); });
   $('#set-voice').addEventListener('change', e => { S.settings.voiceOn = e.target.checked; saveSettings(); if (!e.target.checked) { try { speechSynthesis.cancel(); } catch (x) {} } Voice.refreshUI(); });
   $('#set-vlang').addEventListener('change', e => { S.settings.voiceLang = e.target.value; saveSettings(); Voice.warned = false; Voice.refreshUI(); Voice.test(); });
   $('#set-vvol').addEventListener('change', e => { S.settings.voiceVol = +e.target.value; saveSettings(); Voice.test(); });
