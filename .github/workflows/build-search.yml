@@ -1,0 +1,20 @@
+# Builds vector/search.json (offline place search) from the vector map parts.
+name: Build search index
+on:
+  workflow_dispatch:
+  push:
+    paths: ['tools/build_search.py', '.github/workflows/build-search.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pmtiles mapbox-vector-tile
+      - run: python tools/build_search.py
+      - run: |
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add vector/search.json && git commit -m "Update offline search index" && git push
