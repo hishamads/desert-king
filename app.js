@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.6.1';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -3134,10 +3134,22 @@ const Search = {
     if (navigator.onLine === false) { this.online = []; this.render(); return; }
     this.onlineBusy = true; this.render();
     try {
-      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 10000);
-      const r = await fetch('https://apina.address.gov.sa/NationalAddress/GeoCodeByShortAddress/GeoCodeByShortlAddress?format=json&shortaddress=' + encodeURIComponent(code) + '&api_key=' + encodeURIComponent(key), { signal: ctl.signal });
-      clearTimeout(to);
-      const j = await r.json().catch(() => null);
+      // Two official SPL endpoints can resolve a short code; try both (which one your key covers varies).
+      const urls = [
+        'https://apina.address.gov.sa/NationalAddress/GeoCodeByShortAddress/GeoCodeByShortlAddress?format=json&shortaddress=' + encodeURIComponent(code) + '&api_key=' + encodeURIComponent(key),
+        'https://apina.address.gov.sa/NationalAddress/NationalAddressByShortAddress/NationalAddressByShortAddress?format=json&language=' + (LG.ui === 'en' ? 'E' : 'A') + '&page=1&shortaddress=' + encodeURIComponent(code) + '&api_key=' + encodeURIComponent(key)
+      ];
+      let r = null, j = null, hasPts = false;
+      for (const u of urls) {
+        try {
+          const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 10000);
+          r = await fetch(u, { signal: ctl.signal }); clearTimeout(to);
+          j = await r.json().catch(() => null);
+          hasPts = /"(lat|latitude|y)"\s*:\s*"?-?\d/i.test(JSON.stringify(j || {}));
+          if (hasPts) break;
+        } catch (e) { r = r || { status: 0 }; }
+      }
+      if (!r) throw new Error('net');
       const pts = [];
       const walk = o => {                                  // find {lat, lon} pairs whatever the field names
         if (!o || typeof o !== 'object') return;
