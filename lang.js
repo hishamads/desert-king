@@ -65,7 +65,7 @@ const EN = {
   /* ---- search ---- */
   'البحث': 'Search', '🔎 إلى أين؟': '🔎 Where to?', 'اسم مدينة، قرية، وادي، محطة… أو إحداثيات': 'City, village, valley, station… or coordinates',
   '🧭 تخطيط مسار (من / إلى)': '🧭 Plan a route (from / to)', 'لا توجد نتائج': 'No results', 'جارٍ تجهيز فهرس البحث…': 'Preparing the search index…',
-  'مدينة': 'City', 'بلدة': 'Town', 'قرية': 'Village', 'هجرة': 'Hamlet', 'موقع': 'Place', 'حي': 'District', 'مسكن': 'Dwelling', 'منطقة': 'Area', 'دولة': 'Country',
+  'مدينة': 'City', 'من الإنترنت': 'From the internet', 'بلدة': 'Town', 'قرية': 'Village', 'هجرة': 'Hamlet', 'موقع': 'Place', 'حي': 'District', 'مسكن': 'Dwelling', 'منطقة': 'Area', 'دولة': 'Country',
   'محطة وقود': 'Fuel station', 'مسجد': 'Mosque', 'مستشفى': 'Hospital', 'مستوصف': 'Clinic', 'صيدلية': 'Pharmacy', 'مدرسة': 'School', 'جامعة': 'University', 'كلية': 'College',
   'شرطة': 'Police', 'مطعم': 'Restaurant', 'مقهى': 'Café', 'تموينات': 'Grocery', 'بقالة': 'Grocery', 'سوق': 'Market', 'فندق': 'Hotel', 'بنك': 'Bank', 'صراف': 'ATM', 'ورشة': 'Workshop',
   'حديقة': 'Park', 'جبل': 'Mountain', 'بركان': 'Volcano', 'تل': 'Hill', 'وادي': 'Valley', 'رمال': 'Sand', 'صحراء': 'Desert', 'كثبان': 'Dunes', 'شاطئ': 'Beach', 'ماء': 'Water',

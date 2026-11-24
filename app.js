@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.5.1';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -3121,6 +3121,34 @@ const Search = {
     return out.slice(0, max + 10);
   },
 
+  online: [], onlineQ: '', onlineBusy: false,
+
+  /** Online lookup (OpenStreetMap Nominatim) for any place in the world — only when connected.
+   *  Rate-limited by the caller (≥ 900 ms after typing stops, min 3 chars). */
+  async fetchOnline(q) {
+    q = (q || '').trim();
+    if (q.length < 3 || navigator.onLine === false || parsePair(q)) { this.online = []; this.onlineQ = q; this.onlineBusy = false; this.render(); return; }
+    if (q === this.onlineQ && this.online.length) return;
+    this.onlineBusy = true; this.render();
+    try {
+      const c = MapView.map ? MapView.map.getCenter() : null;
+      const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=12&accept-language=' + (LG.ui === 'en' ? 'en' : 'ar,en')
+        + '&q=' + encodeURIComponent(q);
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 8000);
+      const r = await fetch(url, { signal: ctl.signal }); clearTimeout(to);
+      const j = r.ok ? await r.json() : [];
+      if ($('#srch-q').value.trim() !== q) return;                       // user kept typing
+      const here = S.pos || (c ? { lat: c.lat, lon: c.lng } : null);
+      this.online = j.map(x => {
+        const la = +x.lat, lo = +x.lon;
+        return { name: (x.name || (x.display_name || '').split(',')[0] || q), sub: (x.display_name || '').split(',').slice(1, 3).join('،').trim(),
+                 lat: la, lon: lo, icon: '🌐', label: 'من الإنترنت', type: 'net', d: here ? haversine(here.lat, here.lon, la, lo) : 0 };
+      });
+      this.onlineQ = q;
+    } catch (e) { this.online = []; }
+    this.onlineBusy = false; this.render();
+  },
+
   async open() {
     UI.openSheet('sheet-search');
     const inp = $('#srch-q');
@@ -3129,7 +3157,7 @@ const Search = {
       $('#srch-hint').textContent = 'جارٍ تجهيز فهرس البحث…';
       const j = await this.load();
       $('#srch-hint').textContent = j
-        ? `ابحث في ${j.d.length.toLocaleString('en')} اسم: مدن، قرى، أحياء، طرق، أودية، جبال، محطات، مساجد… أو الصق إحداثيات أو رابط خرائط جوجل.`
+        ? `ابحث في ${j.d.length.toLocaleString('en')} اسم: مدن، قرى، أحياء، طرق، أودية، جبال، محطات، مساجد… أو الصق إحداثيات أو رابط خرائط جوجل. ومع الإنترنت يبحث أيضاً في أي مكان بالعالم.`
         : 'البحث في الأماكن يعمل دون إنترنت بعد تنزيل «الخريطة الرسومية». الآن: مواقعك المحفوظة والإحداثيات فقط.';
     }
     this.render();
@@ -3138,15 +3166,20 @@ const Search = {
   render() {
     const q = $('#srch-q').value;
     this.results = this.query(q);
+    if (this.onlineQ === q.trim()) {
+      const have = this.results;
+      this.results = have.concat(this.online.filter(o => !have.some(h => Math.abs(h.lat - o.lat) < 0.002 && Math.abs(h.lon - o.lon) < 0.002)));
+    }
     const box = $('#srch-res');
     if (!q.trim()) { box.innerHTML = ''; return; }
-    if (!this.results.length) { box.innerHTML = '<p class="empty">لا توجد نتائج</p>'; return; }
+    const busy = this.onlineBusy ? `<p class="empty">${X('جارٍ البحث عبر الإنترنت…', 'Searching online…')}</p>` : '';
+    if (!this.results.length) { box.innerHTML = busy || `<p class="empty">${X('لا توجد نتائج', 'No results')}${navigator.onLine === false ? X(' — لا يوجد إنترنت للبحث الموسّع', ' — offline, no wider search') : ''}</p>`; return; }
     box.innerHTML = this.results.map((r, k) => `
       <button class="srch-item" data-act="srch-pick" data-k="${k}">
         <span class="srch-ico">${r.icon}</span>
         <span class="srch-txt"><b>${escapeHtml(r.name)}</b>${r.en ? ` <small class="ltr">${escapeHtml(r.en)}</small>` : ''}<br>
-        <small><span>${escapeHtml(r.label)}</span>${r.d ? ' · <span class="ltr">' + fmtDist(r.d) + '</span>' : ''}</small></span>
-      </button>`).join('');
+        <small><span>${escapeHtml(r.label)}</span>${r.sub ? ' · ' + escapeHtml(r.sub) : ''}${r.d ? ' · <span class="ltr">' + fmtDist(r.d) + '</span>' : ''}</small></span>
+      </button>`).join('') + busy;
   },
 
   pick(k) {
@@ -3652,8 +3685,8 @@ const Actions = {
 };
 
 function bindUI() {
-  let _srchT = null;
-  $('#srch-q').addEventListener('input', () => { clearTimeout(_srchT); _srchT = setTimeout(() => Search.render(), 150); });
+  let _srchN, _srchT = null;
+  $('#srch-q').addEventListener('input', () => { clearTimeout(_srchT); _srchT = setTimeout(() => Search.render(), 150); clearTimeout(_srchN); _srchN = setTimeout(() => Search.fetchOnline($('#srch-q').value), 900); });
   // Delegated click handling (also works for buttons inside Leaflet popups).
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-act]');
