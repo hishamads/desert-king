@@ -16,7 +16,7 @@
  * app.js, otherwise installed devices keep serving the old cached files.
  * ===================================================================== */
 
-const VERSION = 'v2.1.0';
+const VERSION = 'v2.2.0';
 const SHELL_CACHE = `desertnav-shell-${VERSION}`; // replaced on each release
 const CDN_CACHE = 'desertnav-cdn-v1';             // Leaflet (rarely changes)
 const TILE_CACHE = 'desertnav-tiles-v1';          // map tiles — NEVER auto-deleted on update
@@ -34,6 +34,7 @@ const SHELL_ASSETS = [
   './icons/icon-maskable-512.png',
   './lib/leaflet.js',
   './lib/leaflet.css',
+  './lib/leaflet-rotate.js',
   './lib/pmtiles.js',
   './lib/protomaps-leaflet.js',
   './كشتات-حسب-المنطقة.gpx',

@@ -47,7 +47,7 @@
         <button class="exit-btn" data-act="exit" aria-label="خروج" title="خروج">⏻</button>
       </div>
       <div class="chips">
-        <button class="chip" data-act="wp-open">📍 حفظ نقطة</button>
+        <button class="chip" data-act="wp-open">📍 حفظ الموقع</button>
         <button class="chip" data-act="rec-backtrack-any">↩ العودة على الأثر</button>
         <button class="chip" data-act="dl-open">⬇ حفظ المنطقة</button>
       </div>
@@ -70,7 +70,7 @@
       <button class="fab" data-act="open-layers" aria-label="طبقات الخريطة">
         <svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 3 2 8.5 12 14l10-5.5L12 3zm-7.6 9.6L2 14l10 5.5L22 14l-2.4-1.4L12 16.8l-7.6-4.2z" fill="currentColor"/></svg>
       </button>
-      <button class="fab" id="btn-hup" data-act="headingup-toggle" aria-label="اتجاه الرادار" hidden>N↑</button>
+      <button class="fab fab-compass" id="btn-hup" data-act="headingup-toggle" aria-label="البوصلة: الشمال أو اتجاه الحركة للأعلى"><svg id="cmp-needle" viewBox="0 0 24 24" width="30" height="30"><path d="M12 2 15.2 12H8.8z" fill="#ea4335"/><path d="M12 22 8.8 12h6.4z" fill="#9aa0a6"/><circle cx="12" cy="12" r="1.6" fill="#fff"/></svg></button>
     </div>
 
     <!-- 4. Bottom-left: speed / heading chip (tap → full telemetry) + record FAB -->
@@ -140,7 +140,7 @@
       <button class="layer-card" data-act="layer-set" data-layer="radar"><span class="lc-img lc-radar"></span>رادار</button>
     </div>
     <p class="hint">إذا لم تتوفر صورة القمر الصناعي تظهر التضاريس المحفوظة مكانها تلقائياً. الرادار يعمل دائماً بدون خرائط.</p>
-    <label class="switch-row"><span>الرادار: اتجاه الحركة للأعلى</span><input type="checkbox" id="set-headingup"></label>
+    <label class="switch-row"><span>🧭 اتجاه الحركة للأعلى (الخريطة والرادار)</span><input type="checkbox" id="set-headingup"></label>
     <h3 class="sub-h">دليل الخطوط</h3>
     <div id="legend" class="legend-list">
       <div class="lg-row"><i class="lg road"></i>طريق معبّد (مخطط)</div>
@@ -176,7 +176,7 @@
     </div>
     <div class="btn-row">
       <button class="btn" id="rs-toggle" data-act="rec-main">⏸ إيقاف مؤقت</button>
-      <button class="btn btn-primary" id="btn-stop" data-act="rec-stop">■ إنهاء وحفظ</button>
+      <button class="btn btn-primary" id="btn-stop" data-act="rec-stop">■ إنهاء وحفظ المسار</button>
     </div>
     <button class="btn btn-block" style="margin-top:8px" data-act="rec-backtrack">↩ العودة على الأثر (هذا التسجيل)</button>
   </section>
@@ -203,10 +203,12 @@
 
   <!-- 4b. Save / discard recorded track -->
   <section class="sheet" id="sheet-save" aria-label="حفظ المسار">
-    <div class="sheet-head"><h2>إنهاء التسجيل</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <div class="sheet-head"><h2>〰 حفظ المسار المسجّل</h2><button class="x" data-act="close-sheet">✕</button></div>
     <form id="save-form" autocomplete="off">
       <label class="fld">اسم المسار<input id="trk-name" type="text" maxlength="60" required></label>
       <p class="hint ltr" id="save-summary"></p>
+      <label class="switch-row"><span>📍 حفظ نهاية المسار كموقع أيضاً بنفس الاسم</span><input type="checkbox" id="trk-also-place" checked></label>
+      <p class="hint">المسار = الخط المرسوم كاملاً. الموقع = نقطة الوصول فقط (تظهر في البحث، و«الاتجاهات» إليها تستخدم هذا المسار تلقائياً).</p>
       <div class="btn-row">
         <button type="submit" class="btn btn-primary">حفظ المسار</button>
         <button type="button" class="btn btn-danger" data-act="rec-discard">حذف التسجيل</button>
@@ -217,10 +219,10 @@
 
   <!-- 4c. Lists: waypoints / tracks / offline regions -->
   <section class="sheet sheet-tall" id="sheet-lists" aria-label="النقاط والمسارات">
-    <div class="sheet-head"><h2>النقاط والمسارات</h2><button class="x" data-act="close-sheet">✕</button></div>
+    <div class="sheet-head"><h2>المواقع والمسارات</h2><button class="x" data-act="close-sheet">✕</button></div>
     <div class="tabs">
-      <button class="tab active" data-act="tab" data-tab="wps">النقاط</button>
-      <button class="tab" data-act="tab" data-tab="trks">المسارات</button>
+      <button class="tab active" data-act="tab" data-tab="wps">📍 المواقع</button>
+      <button class="tab" data-act="tab" data-tab="trks">〰 المسارات</button>
       <button class="tab" data-act="tab" data-tab="regions">المناطق المحفوظة</button>
     </div>
     <div class="tab-body" id="tab-wps"></div>
@@ -356,6 +358,7 @@
 
   <!-- Leaflet first (may fail offline on very first run), then the app. -->
   <script src="./lib/leaflet.js"></script>
+  <script src="./lib/leaflet-rotate.js"></script>
   <script src="./lib/pmtiles.js"></script>
   <script src="./lib/protomaps-leaflet.js"></script>
   <script src="app.js"></script>

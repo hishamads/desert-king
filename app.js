@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -421,6 +421,7 @@ const UI = {
       Guide.render();
       MapView.updateHeading();
       Radar.draw();
+      updateCompass();
     });
   }
 };
@@ -699,7 +700,7 @@ const Recorder = {
     UI.openSheet('sheet-save');
   },
 
-  async save(name) {
+  async save(name, alsoPlace) {
     const r = S.rec;
     const segments = r.segments.filter(s => s.length > 0);
     if (segments.reduce((n, s) => n + s.length, 0) < 2) {
@@ -715,7 +716,8 @@ const Recorder = {
     S.tracks.push(track);
     this.discard(true);
     MapView.renderTracks();
-    UI.toast('✅ تم حفظ المسار');
+    if (alsoPlace) { await saveTrackEndAsPlace(track, true); UI.toast(`✅ تم حفظ «${track.name}» كمسار وكموقع`); }
+    else UI.toast('✅ تم حفظ المسار');
   },
 
   discard(silent) {
@@ -1366,7 +1368,10 @@ const MapView = {
       zoom: 6,
       maxZoom: 19,
       worldCopyJump: true,
-      tap: false
+      tap: false,
+      // leaflet-rotate: the map turns with the direction of travel (compass button)
+      rotate: true, bearing: 0, touchRotate: false, shiftKeyRotate: false,
+      rotateControl: false, compassBearing: false
     });
     this.map.attributionControl.setPrefix(false);
     this.map.attributionControl.setPosition('bottomleft');   // under the FABs
@@ -1504,8 +1509,21 @@ const MapView = {
     }
   },
 
+  /** Screen rotation of the map in degrees (0 = north up). */
+  // leaflet-rotate turns the map content clockwise by its bearing, so the
+  // direction shown at the top of the screen is -bearing.
+  screenRot() { return this.map && this.map.getBearing ? -this.map.getBearing() : 0; },
+
+  /** Heading-up: keep the direction of travel pointing up (like Google Maps). */
+  applyBearing() {
+    if (!this.map || !this.map.setBearing) return;
+    const want = (S.settings.headingUp && S.heading != null) ? S.heading : 0;   // direction to show at the top
+    if (Math.abs(angleDiff(want, this.screenRot())) >= 2) this.map.setBearing((360 - want) % 360);
+  },
+
   /** Rotate the heading cone on the live marker. */
   updateHeading() {
+    this.applyBearing();
     if (!this.me) return;
     const el = this.me.getElement();
     if (!el) return;
@@ -1513,7 +1531,7 @@ const MapView = {
     const cone = me && me.firstElementChild;
     if (!cone) return;
     me.classList.toggle('no-heading', S.heading == null);
-    if (S.heading != null) cone.style.transform = `rotate(${S.heading}deg)`;
+    if (S.heading != null) cone.style.transform = `rotate(${S.heading - this.screenRot()}deg)`;
   },
 
   /* ---- current recording polyline ---- */
@@ -2817,6 +2835,13 @@ const Search = {
       const n = normAr(w.name + ' ' + (w.region || '') + ' ' + (w.note || ''));
       if (match(n)) { const c = CATS[w.cat] || CATS.other; out.push({ name: w.name, lat: w.lat, lon: w.lon, icon: c.icon, label: 'محفوظ · ' + c.label, type: 'wp', w, d: dist(w.lat, w.lon) }); }
     }
+    for (const t of S.tracks) {
+      if (!match(normAr(t.name))) continue;
+      const segs = t.segments.filter(sg => sg.length);
+      if (!segs.length) continue;
+      const last = segs[segs.length - 1][segs[segs.length - 1].length - 1];
+      out.push({ name: t.name, lat: last[0], lon: last[1], icon: '〰', label: 'مسار محفوظ · ' + fmtDist(t.distance), type: 'trk', t, d: dist(last[0], last[1]) });
+    }
     out.sort((a, b) => (a.d || 0) - (b.d || 0));
 
     // 3. Offline index.
@@ -2883,6 +2908,10 @@ const Search = {
     if (S.view === 'map' && MapView.map) MapView.map.setView([r.lat, r.lon], Math.max(MapView.map.getZoom(), r.type === 'idx' && r.label === 'مدينة' ? 11 : 14));
     else { Radar.center = { lat: r.lat, lon: r.lon }; Radar.draw(); }
     if (r.type === 'wp') Place.openWp(r.w);
+    else if (r.type === 'trk') {
+      if (S.view === 'map' && MapView.map) MapView.fitPoints(r.t.segments.flat().map(p => [p[0], p[1]]));
+      Place.openNamed({ ...r, label: 'نهاية ' + r.label });
+    }
     else Place.openNamed(r);
   }
 };
@@ -2992,6 +3021,7 @@ const Lists = {
           <button class="btn btn-sm btn-primary" data-act="trk-back" data-id="${t.id}">↩ عودة على الأثر</button>
           <button class="btn btn-sm" data-act="trk-follow" data-id="${t.id}">اتبع المسار</button>
           <button class="btn btn-sm" data-act="trk-start" data-id="${t.id}">إلى البداية</button>
+          <button class="btn btn-sm" data-act="trk-place" data-id="${t.id}">📍 حفظ نهايته كموقع</button>
           <button class="btn btn-sm" data-act="trk-fit" data-id="${t.id}">عرض</button>
           <button class="btn btn-sm" data-act="trk-toggle" data-id="${t.id}">${t.visible ? 'إخفاء' : 'إظهار'}</button>
           <button class="btn btn-sm" data-act="trk-export" data-id="${t.id}">GPX ⬇</button>
@@ -3048,7 +3078,6 @@ function setView(mode, auto = false) {
   S.autoSwitched = auto && mode === 'radar';
   document.body.classList.toggle('view-radar', mode === 'radar');
   document.body.classList.toggle('view-map', mode === 'map');
-  $('#btn-hup').hidden = mode !== 'radar';
   $('#mode-badge').hidden = mode !== 'radar';
   $('#mode-badge').textContent = MODE_BADGE_TEXT;
   updateLayerCards();
@@ -3093,12 +3122,33 @@ function setFollow(on) {
 
 function saveSettings() { Store.kvSet('settings', S.settings).catch(() => {}); }
 
+/** Save the last point of a track as a place with the same name, so the place
+ * appears in search and «الاتجاهات» to it reuses the track for the unpaved part. */
+async function saveTrackEndAsPlace(t, silent) {
+  const segs = t.segments.filter(sg => sg.length);
+  const last = segs[segs.length - 1][segs[segs.length - 1].length - 1];
+  const dup = S.waypoints.find(w => w.name === t.name && haversine(w.lat, w.lon, last[0], last[1]) < 80);
+  if (dup) { if (!silent) UI.toast('الموقع محفوظ مسبقاً'); return dup; }
+  const wp = { id: uid(), name: t.name.slice(0, 40), cat: 'other', lat: last[0], lon: last[1],
+               alt: last[2] != null ? Math.round(last[2]) : null, created: Date.now(), note: 'نهاية المسار «' + t.name + '»' };
+  await Waypoints.add(wp);
+  Lists.render();
+  if (!silent) UI.toast(`📍 تم حفظ نهاية المسار كموقع «${wp.name}»`);
+  return wp;
+}
+
+/** Compass button: the red needle always points to true north on screen. */
+function updateCompass() {
+  const rot = S.view === 'radar' ? Radar.rotation() : MapView.screenRot();
+  const n = $('#cmp-needle');
+  if (n) n.style.transform = `rotate(${-rot}deg)`;
+}
+
 function syncSettingsForm() {
   $('#set-autoradar').checked = !!S.settings.autoRadar;
   $('#set-mindist').value = S.settings.minDist;
   $('#set-interval').value = S.settings.interval;
   $('#set-maxacc').value = S.settings.maxAcc;
-  $('#btn-hup').textContent = S.settings.headingUp ? '↑اتجاه' : 'N↑';
   $('#set-headingup').checked = !!S.settings.headingUp;
   $('#btn-hup').classList.toggle('on', S.settings.headingUp);
   WakeLock.refreshUI();
@@ -3228,6 +3278,7 @@ const Actions = {
     MapView.renderTracks();
     Lists.render();
   },
+  'trk-place'(el) { const t = findTrack(el.dataset.id); if (t) saveTrackEndAsPlace(t); },
   'trk-export'(el) { const t = findTrack(el.dataset.id); if (t) GPX.exportTrack(t); },
   async 'trk-del'(el) {
     const t = findTrack(el.dataset.id);
@@ -3266,8 +3317,9 @@ const Actions = {
   },
   'headingup-toggle'() {
     S.settings.headingUp = !S.settings.headingUp;
-    saveSettings(); syncSettingsForm(); Radar.draw();
-    UI.toast(S.settings.headingUp ? 'الرادار: اتجاه الحركة للأعلى' : 'الرادار: الشمال للأعلى');
+    saveSettings(); syncSettingsForm(); Radar.draw(); MapView.applyBearing(); updateCompass();
+    if (S.settings.headingUp && S.heading == null) UI.toast('اتجاه الحركة للأعلى — يبدأ الدوران عند توفر الاتجاه (تحرّك أو فعّل البوصلة)', 4000);
+    else UI.toast(S.settings.headingUp ? '🧭 اتجاه الحركة للأعلى' : '🧭 الشمال للأعلى');
   },
   center() {
     if (!S.pos) { UI.toast('بانتظار إشارة GPS…'); return; }
@@ -3346,7 +3398,7 @@ function bindUI() {
   $('#wp-form').addEventListener('submit', e => { e.preventDefault(); Waypoints.saveFromForm(); });
   $('#save-form').addEventListener('submit', async e => {
     e.preventDefault();
-    await Recorder.save($('#trk-name').value.trim());
+    await Recorder.save($('#trk-name').value.trim(), $('#trk-also-place').checked);
     UI.closeSheet();
   });
 
@@ -3358,7 +3410,7 @@ function bindUI() {
 
   $('#set-wakelock').addEventListener('change', e => WakeLock.set(e.target.checked));
   $('#set-headingup').addEventListener('change', e => {
-    S.settings.headingUp = e.target.checked; saveSettings(); syncSettingsForm(); Radar.draw();
+    S.settings.headingUp = e.target.checked; saveSettings(); syncSettingsForm(); Radar.draw(); MapView.applyBearing(); updateCompass();
   });
   $('#set-autoradar').addEventListener('change', e => { S.settings.autoRadar = e.target.checked; saveSettings(); });
   const num = (id, key, min, max) => $(id).addEventListener('change', e => {

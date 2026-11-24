@@ -393,3 +393,7 @@ body.sheet-open .toast { top: calc(var(--sat) + 12px); bottom: auto; }
 .srch-txt { flex: 1; font-size: 15px; color: var(--ink); line-height: 1.35; }
 .srch-txt small { color: var(--muted); font-size: 12.5px; }
 .sheet-tall { max-height: 85vh; }
+
+/* Compass button (Google-style): needle points north; blue ring when heading-up */
+.fab-compass #cmp-needle { transition: transform .25s ease-out; }
+.fab-compass.on { box-shadow: 0 0 0 3px var(--blue), var(--shadow); }
