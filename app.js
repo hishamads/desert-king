@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.6.1';
+const APP_VERSION = '2.7.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -125,6 +125,8 @@ const DEFAULT_SETTINGS = {
   uiLang: 'ar',      // app language: 'ar' | 'en'
   voiceOn: true,     // spoken guidance
   voiceLang: 'ar',   // voice language: 'ar' | 'en' (independent of the app language)
+  autoReroute: true, // recalculate automatically when off a paved route
+  autoZoom: true,    // zoom the map with speed while navigating
   natKey: '',        // Saudi National Address (SPL) API subscription key
   voiceVol: 1        // 0.3 … 1
 };
@@ -885,7 +887,7 @@ const Guide = {
   /** Follow a planned route (see Router.plan). Persisted for offline restarts. */
   setPlan(plan, silent) {
     Store.kvSet('activePlan', plan).catch(() => {});
-    this.setPath(plan.name, plan.pts, { isPlan: true, segKind: plan.segKind, steps: plan.steps, parts: plan.parts }, silent);
+    this.setPath(plan.name, plan.pts, { isPlan: true, segKind: plan.segKind, steps: plan.steps, parts: plan.parts, dest: plan.to }, silent);
   },
 
   /** Common set-up for any polyline target. */
@@ -970,6 +972,26 @@ const Guide = {
     return t && t.segKind ? t.segKind[Math.min(t.near, t.segKind.length - 1)] : null;
   },
 
+  /** New route from the current position to the same destination (paved sections only). */
+  async reroute() {
+    const t = S.target, p = S.pos;
+    if (!t || !t.dest || !p) return;
+    t.rerouting = true; t.lastReroute = Date.now();
+    Voice.say(S.settings.voiceLang === 'en' ? 'Recalculating the route.' : 'جارٍ إعادة حساب المسار.', { urgent: true });
+    try {
+      const plan = await Router.plan({ lat: p.lat, lon: p.lon, name: 'موقعي' }, t.dest);
+      if (!S.target || S.target !== t) return;                        // guidance changed meanwhile
+      if (!plan.online) throw new Error('offline');
+      this.setPlan(plan, true);
+      S.target.lastReroute = Date.now();
+      UI.toast('🔄 أُعيد حساب المسار', 3500);
+      Voice.say(S.settings.voiceLang === 'en' ? 'Route updated.' : 'تم تحديث المسار.', { urgent: true });
+    } catch (e) {
+      if (S.target) { S.target.rerouting = false; S.target.lastReroute = Date.now() + 25000; }
+      UI.toast('تعذّرت إعادة حساب المسار — تابع بحسب التنبيه', 4000);
+    }
+  },
+
   /** Called on every GPS fix: compute distance/bearing, arrival, road-type change. */
   update() {
     const t = S.target, p = S.pos;
@@ -988,6 +1010,11 @@ const Guide = {
 
     // Entering the unpaved part: suggest recording (only on request — never automatic).
     const kind = this.currentKind();
+    // Off a PAVED route → recalculate automatically (needs internet). Unpaved/direct: only the off-route alert.
+    t.canReroute = !!(t.isPlan && t.dest && kind === 'road' && S.settings.autoReroute && navigator.onLine !== false);
+    if (t.canReroute && t.offTrack > 70) t.offN = (t.offN || 0) + 1; else t.offN = 0;
+    if (t.canReroute && t.offN >= 3 && !t.rerouting && Date.now() - (t.lastReroute || 0) > 20000) this.reroute();
+
     if (kind && t.lastKind === 'road' && kind !== 'road' && t.offTrack < 150) {
       navigator.vibrate && navigator.vibrate([150, 80, 150]);
       UI.toast(S.rec.status === 'recording'
@@ -1053,9 +1080,12 @@ const Guide = {
     const rel = S.heading != null ? angleDiff(t.brg, S.heading) : t.brg;
     $('#guide-arrow').style.transform = `rotate(${rel}deg)`;
     const off = t.mode === 'track' && t.offTrack > 80;
-    noteEl.textContent = off ? `${X('⚠️ خارج المسار بـ ', '⚠️ Off route by ')}${fmtDist(t.offTrack)}`
+    if (off && t.canReroute) { noteEl.textContent = X('🔄 جارٍ إعادة حساب المسار…', '🔄 Recalculating…'); noteEl.classList.add('warn'); }
+    else noteEl.textContent = off ? `${X('⚠️ خارج المسار بـ ', '⚠️ Off route by ')}${fmtDist(t.offTrack)}`
       : (S.heading == null ? 'السهم بالنسبة للشمال — تحرّك أو فعّل البوصلة' : '');
-    noteEl.classList.toggle('warn', off);
+    if (!(off && t.canReroute)) noteEl.classList.toggle('warn', off);
+    const spdEl = $('#guide-spd');
+    if (spdEl) { const k = S.pos && S.pos.speed != null ? S.pos.speed * 3.6 : null; spdEl.textContent = k == null ? '--' : Math.round(k); }
 
     const kindEl = $('#guide-kind');
     if (kind) {
@@ -1189,7 +1219,7 @@ const Voice = {
     // 1. Off route / back on route.
     if (t.mode === 'track') {
       if (off > 100) v.offN++; else v.offN = 0;
-      if (v.offN >= 3 && (!v.offOn || now - v.offAt > 45000) && !Guide.arrived) {
+      if (v.offN >= 3 && !t.canReroute && (!v.offOn || now - v.offAt > 45000) && !Guide.arrived) {
         v.offOn = true; v.offAt = now;
         const d = this.dist(off, lang);
         this.say(en ? `You are off route by ${d}.` : `ابتعدت عن المسار بمقدار ${d}.`, { urgent: true });
@@ -1466,7 +1496,7 @@ const Router = {
     steps.push({ along, text: 'الوصول إلى ' + to.name, kind: segKind[segKind.length - 1] || 'road', sp: 'arrive', to: to.name });
     steps.sort((a, b) => a.along - b.along);
     return {
-      name: to.name, from: { lat: from.lat, lon: from.lon, name: from.name }, to: { lat: to.lat, lon: to.lon, name: to.name },
+      name: to.name, from: { lat: from.lat, lon: from.lon, name: from.name }, to: { lat: to.lat, lon: to.lon, name: to.name, trackId: to.trackId, noApproach: to.noApproach },
       pts, segKind, steps, parts: parts.map(p => ({ kind: p.kind, pts: p.pts })),
       roadM, offM, durationS: roadDuration + offM / (OFFROAD_KMH / 3.6), online, created: Date.now()
     };
@@ -1634,6 +1664,9 @@ const MapView = {
 
     // Manual dragging disables follow mode.
     this.map.on('dragstart', () => setFollow(false));
+    // Manual zoom (pinch / buttons) pauses the speed-based auto zoom.
+    this.map.on('zoomstart', () => { const z = this.zAuto; if (z && !z.busy) z.manual = Date.now() + 25000; });
+    this.map.on('zoomend', () => { if (this.zAuto) this.zAuto.busy = false; });
     // Long-press (iOS/Android) or right-click: drop a pin there.
     this.map.on('contextmenu', e => Place.openPin(e.latlng.lat, e.latlng.lng));
     // Reset tile counters each time the view changes (for radar fallback).
@@ -1753,7 +1786,24 @@ const MapView = {
     if (S.follow && S.view === 'map') {
       if (this.firstFix) { this.map.setView(ll, 15, { animate: false }); this.firstFix = false; }
       else this.map.panTo(ll, { animate: true, duration: .4 });
+      this.autoZoom();
     }
+  },
+
+  /** While navigating: zoom out as speed rises, in as it drops (a manual zoom pauses it for 25 s). */
+  autoZoom() {
+    if (!S.settings.autoZoom || !S.target || !S.pos || S.pos.speed == null) return;
+    const z = this.zAuto || (this.zAuto = { sp: 0, last: 0, manual: 0, busy: false });
+    z.sp = z.sp ? z.sp * 0.7 + S.pos.speed * 3.6 * 0.3 : S.pos.speed * 3.6;
+    const now = Date.now();
+    if (now < z.manual || now - z.last < 5000 || z.busy) return;
+    const k = z.sp;
+    let tz = k < 8 ? 17 : k < 40 ? 16 : k < 70 ? 15 : k < 100 ? 14 : 13;
+    tz = Math.min(tz, this.map.getMaxZoom());
+    const cur = Math.round(this.map.getZoom());
+    if (tz === cur) return;
+    z.last = now; z.busy = true;
+    this.map.setZoom(cur + Math.sign(tz - cur), { animate: true });      // one step at a time
   },
 
   /** Screen rotation of the map in degrees (0 = north up). */
@@ -3488,6 +3538,8 @@ function syncSettingsForm() {
   $('#set-natkey').value = S.settings.natKey || '';
   Voice.refreshUI();
   $('#set-autoradar').checked = !!S.settings.autoRadar;
+  $('#set-reroute').checked = !!S.settings.autoReroute;
+  $('#set-autozoom').checked = !!S.settings.autoZoom;
   $('#set-mindist').value = S.settings.minDist;
   $('#set-interval').value = S.settings.interval;
   $('#set-maxacc').value = S.settings.maxAcc;
@@ -3764,6 +3816,8 @@ function bindUI() {
     S.settings.headingUp = e.target.checked; saveSettings(); syncSettingsForm(); Radar.draw(); MapView.applyBearing(); updateCompass();
   });
   $('#set-autoradar').addEventListener('change', e => { S.settings.autoRadar = e.target.checked; saveSettings(); });
+  $('#set-reroute').addEventListener('change', e => { S.settings.autoReroute = e.target.checked; saveSettings(); });
+  $('#set-autozoom').addEventListener('change', e => { S.settings.autoZoom = e.target.checked; saveSettings(); });
   const num = (id, key, min, max) => $(id).addEventListener('change', e => {
     const v = Math.min(max, Math.max(min, parseInt(e.target.value, 10) || DEFAULT_SETTINGS[key]));
     S.settings[key] = v; e.target.value = v; saveSettings();

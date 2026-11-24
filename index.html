@@ -110,6 +110,7 @@
     </div>
     <div id="guide-bottom" class="nav-bottom" hidden>
       <button class="nb-x" data-act="guide-stop" aria-label="إنهاء الملاحة">✕</button>
+      <div class="nb-spd"><b id="guide-spd" class="ltr">--</b><small>كم/س</small></div>
       <div class="nb-info">
         <div class="nb-main"><b class="ltr" id="guide-dist">--</b> <span class="nb-eta" id="guide-eta"></span></div>
         <div class="nb-sub"><span class="ltr" id="guide-brg">--°</span> <span id="guide-card">--</span> <span class="kind-badge" id="guide-kind" hidden></span></div>
@@ -248,6 +249,14 @@
       <label class="switch-row">
         <span>التحويل التلقائي للرادار عند غياب الخرائط</span>
         <input type="checkbox" id="set-autoradar">
+      </label>
+      <label class="switch-row">
+        <span>إعادة حساب المسار تلقائياً عند الخروج منه (الطرق المعبّدة)</span>
+        <input type="checkbox" id="set-reroute">
+      </label>
+      <label class="switch-row">
+        <span>تكبير وتصغير الخريطة حسب السرعة أثناء الملاحة</span>
+        <input type="checkbox" id="set-autozoom">
       </label>
       <button class="btn btn-block" data-act="compass-enable">🧭 تفعيل / معايرة البوصلة</button>
     </div>

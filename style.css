@@ -403,3 +403,8 @@ body.sheet-open .toast { top: calc(var(--sat) + 12px); bottom: auto; }
 /* English / LTR: flip the switch knob */
 html.lang-en .switch-row input::after { right: auto; left: 3px; transition: left .2s; }
 html.lang-en .switch-row input:checked::after { left: 23px; right: auto; }
+
+/* speedometer in the navigation card */
+.nb-spd { flex: none; width: 62px; height: 62px; border-radius: 50%; border: 3px solid var(--blue); display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+.nb-spd b { font-size: 22px; font-weight: 800; }
+.nb-spd small { font-size: 10px; color: var(--muted); margin-top: 2px; }
