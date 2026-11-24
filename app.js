@@ -29,9 +29,9 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
-const MAX_DOWNLOAD_TILES = 8000;                  // safety cap per area
+const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
 const TRANSPARENT_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
@@ -2183,17 +2183,17 @@ const Offline = {
     if (zmin > zmax) [zmin, zmax] = [zmax, zmin];
     const n = this.count(this.bounds, zmin, zmax);
     const mb = n * LAYERS[$('#dl-layer').value].kbPerTile / 1024;
-    const tooMany = n > MAX_DOWNLOAD_TILES;
+    const tooMany = mb > MAX_DOWNLOAD_MB;
     $('#dl-est').textContent = `${n.toLocaleString('en')} مربع ≈ ${mb.toFixed(mb < 10 ? 1 : 0)} ميجابايت` +
-      (tooMany ? ` — أكثر من الحد (${MAX_DOWNLOAD_TILES.toLocaleString('en')}): قرّب الخريطة أو قلّل مستوى التكبير` : '');
+      (tooMany ? ` — أكثر من الحد (${MAX_DOWNLOAD_MB} ميجابايت): قرّب الخريطة أو قلّل مستوى التكبير` : '');
     $('#dl-start').disabled = tooMany || this.running;
-    return { n, zmin, zmax };
+    return { n, zmin, zmax, tooMany };
   },
 
   async start() {
     if (this.running) return;
-    const { n, zmin, zmax } = this.estimate();
-    if (n > MAX_DOWNLOAD_TILES) return;
+    const { n, zmin, zmax, tooMany } = this.estimate();
+    if (tooMany) return;
     const layer = $('#dl-layer').value;
     if (navigator.onLine === false) { UI.toast('لا يوجد اتصال بالإنترنت'); return; }
 
