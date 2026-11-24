@@ -16,7 +16,7 @@
  * app.js, otherwise installed devices keep serving the old cached files.
  * ===================================================================== */
 
-const VERSION = 'v1.9.0';
+const VERSION = 'v2.0.0';
 const SHELL_CACHE = `desertnav-shell-${VERSION}`; // replaced on each release
 const CDN_CACHE = 'desertnav-cdn-v1';             // Leaflet (rarely changes)
 const TILE_CACHE = 'desertnav-tiles-v1';          // map tiles — NEVER auto-deleted on update
@@ -32,15 +32,17 @@ const SHELL_ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
+  './lib/leaflet.js',
+  './lib/leaflet.css',
+  './lib/pmtiles.js',
+  './lib/protomaps-leaflet.js',
   './كشتات-حسب-المنطقة.gpx',
   './طريق-المخيم.gpx'
 ];
 
-/* External libraries — must match the <link>/<script> URLs in index.html. */
-const CDN_ASSETS = [
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-];
+/* External libraries. Since v2.0 Leaflet is served from ./lib (in SHELL_ASSETS),
+ * so nothing is needed from a CDN; kept for older cached pages. */
+const CDN_ASSETS = [];
 
 /* Hostnames that serve map tiles (must match LAYERS in app.js). */
 const TILE_HOSTS = [
@@ -117,6 +119,9 @@ self.addEventListener('fetch', event => {
     event.respondWith(tileStrategy(url));
     return;
   }
+  // The vector-map parts (~90 MB each) are stored by the app in IndexedDB:
+  // never copy them into the shell cache.
+  if (url.origin === self.location.origin && url.pathname.includes('/vector/')) return;
   if (url.origin === self.location.origin) {
     event.respondWith(shellStrategy(req));
     return;

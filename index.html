@@ -22,7 +22,7 @@
 
   <!-- Leaflet (cached by sw.js for offline use). If it is missing the app
        still runs in radar mode. -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="./lib/leaflet.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="view-map">
@@ -136,6 +136,7 @@
       <button class="layer-card" data-act="layer-set" data-layer="sat"><span class="lc-img lc-sat"></span>قمر صناعي</button>
       <button class="layer-card" data-act="layer-set" data-layer="topo"><span class="lc-img lc-topo"></span>تضاريس</button>
       <button class="layer-card" data-act="layer-set" data-layer="osm"><span class="lc-img lc-osm"></span>شوارع</button>
+      <button class="layer-card" data-act="layer-set" data-layer="vec"><span class="lc-img lc-vec"></span>رسومية</button>
       <button class="layer-card" data-act="layer-set" data-layer="radar"><span class="lc-img lc-radar"></span>رادار</button>
     </div>
     <p class="hint">إذا لم تتوفر صورة القمر الصناعي تظهر التضاريس المحفوظة مكانها تلقائياً. الرادار يعمل دائماً بدون خرائط.</p>
@@ -308,7 +309,9 @@
       <label class="fld">من مستوى تكبير<select id="dl-zmin" class="ltr"></select></label>
       <label class="fld">إلى مستوى تكبير<select id="dl-zmax" class="ltr"></select></label>
     </div>
-    <button class="btn btn-block btn-primary" data-act="dl-ksa-sat">🛰️ المملكة كاملة — قمر صناعي (تكبير 5–11 · ≈350 م.ب)</button>
+    <button class="btn btn-block btn-primary" id="vec-dl" data-act="vec-dl">🗺️ الخريطة الرسومية للمملكة كاملة (≈255 م.ب)</button>
+    <button class="btn btn-block" id="vec-rm" data-act="vec-rm" hidden>حذف الخريطة الرسومية</button>
+    <button class="btn btn-block" data-act="dl-ksa-sat">🛰️ المملكة كاملة — قمر صناعي (تكبير 5–11 · ≈350 م.ب)</button>
     <button class="btn btn-block" data-act="dl-ksa">🏜️ خلفية تضاريس المملكة كاملة (تكبير 5–9 · ≈35 م.ب)</button>
     <p class="hint">تُنزَّل مرة واحدة، وتظهر خلف الخريطة في أي مكان لا تتوفر فيه صور محفوظة.</p>
     <p class="dl-est" id="dl-est">—</p>
@@ -343,7 +346,9 @@
   <input type="file" id="gpx-input" multiple hidden>
 
   <!-- Leaflet first (may fail offline on very first run), then the app. -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="./lib/leaflet.js"></script>
+  <script src="./lib/pmtiles.js"></script>
+  <script src="./lib/protomaps-leaflet.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

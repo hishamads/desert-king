@@ -380,3 +380,6 @@ body.guiding .toast { bottom: calc(var(--sab) + 130px); }
 .drop-pin::before { content: ""; position: absolute; left: 2px; top: 0; width: 24px; height: 24px; background: #d93025; border: 3px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 1px 4px rgba(0,0,0,.4); }
 
 body.sheet-open .toast { top: calc(var(--sat) + 12px); bottom: auto; }
+
+/* Vector-map layer card preview */
+.lc-vec { background: linear-gradient(135deg, #f6f1e7 0 40%, #fff 40% 44%, #f6f1e7 44% 70%, #f5c46b 70% 73%, #e9e4d8 73%); }

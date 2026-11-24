@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '2.0.0';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -1423,8 +1423,10 @@ const MapView = {
 
   /** Switch base layer (and rebuild the fallback stack). */
   setLayer(key, silent) {
+    if (key === 'vec') return this.setVectorLayer(silent);
     if (!LAYERS[key]) key = 'sat';
-    for (const l of [this.base, this.fb, this.bg, this.bgSat]) if (l) this.map.removeLayer(l);
+    for (const l of [this.base, this.fb, this.bg, this.bgSat, this.vec]) if (l) this.map.removeLayer(l);
+    this.vec = null;
     // Bottom → top: Kingdom terrain (z≤9), Kingdom satellite (z≤11), other detailed layer, selected layer.
     this.bg = this.makeLayer(BG_LAYER, { cacheOnly: true, maxNative: BG_MAX_ZOOM, zIndex: 1 });
     this.bgSat = this.makeLayer('sat', { cacheOnly: true, maxNative: BG_SAT_MAX_ZOOM, zIndex: 2 });
@@ -1436,6 +1438,25 @@ const MapView = {
     if (!silent) UI.toast('الخريطة: ' + LAYERS[key].name);
   },
 
+  /** Offline vector map of the whole Kingdom (roads, names, villages). */
+  async setVectorLayer(silent) {
+    const layer = await Vector.makeLayer();
+    if (!layer) {
+      UI.toast('الخريطة الرسومية غير محفوظة بعد — نزّلها من «حفظ المنطقة»', 4500);
+      if (S.settings.layer === 'vec') { S.settings.layer = 'sat'; saveSettings(); }
+      if (!this.base) this.setLayer('sat', true);
+      updateLayerCards();
+      return;
+    }
+    for (const l of [this.base, this.fb, this.bg, this.bgSat, this.vec]) if (l) this.map.removeLayer(l);
+    this.base = this.fb = this.bg = this.bgSat = null;
+    this.vec = layer.addTo(this.map);
+    S.settings.layer = 'vec';
+    saveSettings();
+    updateLayerCards();
+    if (!silent) UI.toast('الخريطة: رسومية (بدون إنترنت)');
+  },
+
   /**
    * If tiles keep failing and none load (no signal + area not downloaded),
    * switch to the radar automatically instead of showing an empty map.
@@ -1444,6 +1465,12 @@ const MapView = {
     clearTimeout(this._fallbackTimer);
     this._fallbackTimer = setTimeout(() => {
       if (S.view === 'map' && S.settings.autoRadar && this.tileErr >= 3 && this.tileOk === 0) {
+        // Prefer the offline vector map when it is saved; radar otherwise.
+        if (S.settings.layer !== 'vec' && Vector.hasData) {
+          this.setLayer('vec', true);
+          UI.toast('🗺️ لا توجد صور محفوظة هنا — تم التحويل للخريطة الرسومية', 4500);
+          return;
+        }
         setView('radar', true);
         UI.toast('📡 لا توجد صور ولا تضاريس محفوظة لهذه المنطقة — تم التحويل لوضع الرادار', 4500);
       }
@@ -2543,6 +2570,151 @@ const GPX = {
 };
 
 /* =====================================================================
+ * §14b VECTOR — offline vector map of the whole Kingdom («الخريطة الرسومية»)
+ * ---------------------------------------------------------------------
+ * A PMTiles archive (Protomaps basemap, OpenStreetMap data) built by the
+ * GitHub Action in .github/workflows/build-vector.yml and served from
+ * ./vector/ in parts of 90 MB (GitHub's file limit). The parts are kept as
+ * Blobs in their own IndexedDB database; reading a tile slices the Blob, so
+ * the ~250 MB file is never loaded into memory. Rendering: protomaps-leaflet.
+ * ===================================================================== */
+const Vector = {
+  DB: 'desertnav-vector',
+  db: null,
+  running: false,
+
+  open() {
+    if (this.db) return Promise.resolve(this.db);
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(this.DB, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('parts', { keyPath: 'name' });
+      req.onsuccess = () => { this.db = req.result; resolve(this.db); };
+      req.onerror = () => reject(req.error);
+    });
+  },
+  async _req(mode, fn) {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('parts', mode);
+      const r = fn(tx.objectStore('parts'));
+      tx.oncomplete = () => resolve(r ? r.result : undefined);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  },
+  get(name) { return this._req('readonly', st => st.get(name)); },
+  put(obj) { return this._req('readwrite', st => st.put(obj)); },
+  clear() { return this._req('readwrite', st => st.clear()); },
+
+  /** Saved archive description, or null. */
+  async meta() { try { return (await this.get('__meta')) || null; } catch (e) { return null; } },
+
+  /** Download every part (skips parts already stored) — resumable. */
+  async download() {
+    if (this.running) return;
+    if (navigator.onLine === false) { UI.toast('لا يوجد اتصال بالإنترنت'); return; }
+    this.running = true;
+    const bar = $('#dl-bar'), status = $('#dl-status');
+    $('#dl-progress').hidden = false;
+    try {
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+      const idx = await (await fetch('./vector/index.json', { cache: 'no-store' })).json();
+      const old = await this.meta();
+      if (old && old.size !== idx.size) { await this.clear(); }    // new build on the server
+      let done = 0;
+      for (let i = 0; i < idx.parts.length; i++) {
+        const name = idx.parts[i];
+        const have = await this.get(name);
+        if (have && have.blob && have.blob.size > 0) { done += have.blob.size; continue; }
+        status.textContent = `جارٍ تنزيل الجزء ${i + 1} من ${idx.parts.length}…`;
+        const resp = await fetch('./vector/' + name, { cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        // Stream for progress, then store as one Blob.
+        const total = +resp.headers.get('Content-Length') || 0;
+        const reader = resp.body.getReader(), chunks = [];
+        let got = 0;
+        for (;;) {
+          const { done: end, value } = await reader.read();
+          if (end) break;
+          chunks.push(value); got += value.length;
+          const pct = ((done + got) / idx.size) * 100;
+          bar.style.width = pct.toFixed(1) + '%';
+          status.textContent = `الخريطة الرسومية: ${pct.toFixed(0)}% (${Math.round((done + got) / 1048576)} من ${Math.round(idx.size / 1048576)} م.ب)`;
+        }
+        if (total && got !== total) throw new Error('انقطع التنزيل');
+        const blob = new Blob(chunks);
+        chunks.length = 0;
+        await this.put({ name, blob });
+        done += blob.size;
+      }
+      await this.put({ name: '__meta', parts: idx.parts, size: idx.size, maxzoom: idx.maxzoom, saved: Date.now() });
+      bar.style.width = '100%';
+      status.textContent = '✅ تم حفظ الخريطة الرسومية للمملكة كاملة';
+      UI.toast('✅ الخريطة الرسومية جاهزة — اخترها من زر الطبقات', 4500);
+      this.refreshUI();
+    } catch (e) {
+      const full = e && e.name === 'QuotaExceededError';
+      status.textContent = full ? '⚠️ امتلأت مساحة التخزين' : `توقف التنزيل (${e.message}) — اضغط الزر مرة أخرى لاستكمال ما تبقى`;
+    } finally {
+      this.running = false;
+    }
+  },
+
+  async remove() {
+    if (!confirm('حذف الخريطة الرسومية من الجهاز؟')) return;
+    await this.clear();
+    if (S.settings.layer === 'vec') MapView.setLayer('sat', true);
+    this.refreshUI();
+    UI.toast('تم حذف الخريطة الرسومية');
+  },
+
+  /** Build the Leaflet layer from the stored parts, or null if not downloaded. */
+  async makeLayer() {
+    if (typeof protomapsL === 'undefined' || typeof pmtiles === 'undefined') return null;
+    const meta = await this.meta();
+    if (!meta) return null;
+    const blobs = [];
+    for (const n of meta.parts) {
+      const r = await this.get(n);
+      if (!r || !r.blob) return null;
+      blobs.push(r.blob);
+    }
+    const starts = [];
+    let acc = 0;
+    for (const b of blobs) { starts.push(acc); acc += b.size; }
+    // PMTiles "Source" that reads byte ranges across the stored parts.
+    const source = {
+      getKey: () => 'ksa-vector-' + meta.saved,
+      async getBytes(offset, length) {
+        const end = Math.min(offset + length, acc);
+        const pieces = [];
+        for (let i = 0; i < blobs.length; i++) {
+          const a = starts[i], b = a + blobs[i].size;
+          if (b <= offset || a >= end) continue;
+          pieces.push(blobs[i].slice(Math.max(offset, a) - a, Math.min(end, b) - a));
+        }
+        return { data: await new Blob(pieces).arrayBuffer() };
+      }
+    };
+    const archive = new pmtiles.PMTiles(source);
+    const layer = protomapsL.leafletLayer({
+      url: archive, flavor: 'light', lang: 'ar', maxDataZoom: meta.maxzoom || 13,
+      attribution: '© OpenStreetMap · Protomaps'
+    });
+    if (layer.setZIndex) layer.setZIndex(4);
+    return layer;
+  },
+
+  async refreshUI() {
+    const m = await this.meta();
+    this.hasData = !!m;
+    const b = $('#vec-dl'), r = $('#vec-rm');
+    if (b) b.textContent = m ? '🗺️ الخريطة الرسومية محفوظة ✓ (تحديث)' : '🗺️ الخريطة الرسومية للمملكة كاملة (≈255 م.ب)';
+    if (r) r.hidden = !m;
+  }
+};
+
+/* =====================================================================
  * §15 WAKE LOCK — «إبقاء الشاشة نشطة»
  * ---------------------------------------------------------------------
  * On iPhone, locking the screen suspends the page and stops GPS updates.
@@ -2971,6 +3143,8 @@ const Actions = {
   'dl-start'() { Offline.start(); },
   'dl-ksa'() { Offline.presetKSA(); },
   'dl-ksa-sat'() { Offline.presetKSASat(); },
+  'vec-dl'() { Vector.download(); },
+  'vec-rm'() { Vector.remove(); },
   'dl-cancel'() { Offline.abort = true; },
   'tiles-clear'() { Offline.clearAll(); },
   'region-show'(el) {
@@ -3132,6 +3306,7 @@ async function boot() {
   if (!window.isSecureContext) $('#start-hint').textContent = '⚠️ الصفحة ليست عبر HTTPS — لن يعمل GPS ولا العمل دون اتصال.';
 
   registerSW();
+  Vector.refreshUI();
 
   // First run (or storage was wiped): add the bundled camping sites automatically.
   if (!(await Store.kvGet('sitesLoaded', false).catch(() => false))) {
