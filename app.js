@@ -29,7 +29,7 @@
 /* =====================================================================
  * §1 CONSTANTS & CONFIGURATION
  * ===================================================================== */
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.7.1';
 const TILE_CACHE = 'desertnav-tiles-v1';          // must match sw.js
 const MAX_DOWNLOAD_MB = 500;                      // safety cap per area (estimated size)
 const DEFAULT_CENTER = { lat: 25.9800, lon: 48.6600 }; // camp route area, Urayrah (before first fix)
@@ -3151,11 +3151,9 @@ const Search = {
         const n = j.norm[i];
         if (!match(n)) continue;
         const r = j.d[i], kk = j.kindKey[r[4]], layer = j.kindLayer[r[4]];
-        const starts = n.startsWith(qn) ? 0 : (' ' + n).includes(' ' + toks[0]) ? 1 : 2;
-        const rank = layer === 'places' ? (PLACE_RANK[kk] ?? 6) : 8;
         const d = dist(r[2], r[3]);
-        hits.push({ i, score: starts * 1e9 + Math.min(rank, 8) * 1e8 * (n === qn ? 0 : 1) + d, d, kk, layer });
-        if (hits.length > 4000) break;
+        hits.push({ i, score: d, d, kk, layer });                  // nearest first
+        if (hits.length > 30000) break;
       }
       hits.sort((a, b) => a.score - b.score);
       const shown = [];
@@ -3169,6 +3167,8 @@ const Search = {
       }
       out.push(...shown);
     }
+    // Everything (saved places, saved tracks, index) nearest first; a typed coordinate stays on top.
+    out.sort((a, b) => (a.type === 'coord' ? -1 : 0) - (b.type === 'coord' ? -1 : 0) || (a.d || 0) - (b.d || 0));
     return out.slice(0, max + 10);
   },
 
@@ -3262,7 +3262,8 @@ const Search = {
     this.results = this.query(q);
     if (this.onlineQ.replace(/\s/g, '').toUpperCase() === q.trim().replace(/\s/g, '').toUpperCase()) {
       const have = this.results;
-      this.results = have.concat(this.online.filter(o => !have.some(h => Math.abs(h.lat - o.lat) < 0.002 && Math.abs(h.lon - o.lon) < 0.002)));
+      this.results = have.concat(this.online.filter(o => !have.some(h => Math.abs(h.lat - o.lat) < 0.002 && Math.abs(h.lon - o.lon) < 0.002)))
+        .sort((a, b) => (a.type === 'coord' ? -1 : 0) - (b.type === 'coord' ? -1 : 0) || (a.type === 'nokey' ? -1 : 0) - (b.type === 'nokey' ? -1 : 0) || (a.d || 0) - (b.d || 0));
     }
     const box = $('#srch-res');
     if (!q.trim()) { box.innerHTML = ''; return; }
